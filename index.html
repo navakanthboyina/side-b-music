@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111412">
+  <meta name="description" content="A personal music discovery dashboard: four-week listening plans, fresh catalog picks, playlist imports, and feedback that shapes what comes next.">
+  <title>Side B — Your listening room</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111412'/%3E%3Cpath d='M9 12v8m7-13v18m7-13v8' stroke='%23c9f76b' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="data.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to music</a>
+<aside class="sidebar">
+  <a class="brand" href="#discover" aria-label="Side B home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 11v10m10-17v24m10-17v10"/></svg><span>SIDE B<span class="brand-dot">.</span></span></a>
+  <p class="eyebrow side-caption">YOUR LISTENING ROOM</p>
+  <nav aria-label="Main navigation">
+    <a href="#discover" class="nav-link active" data-view="discover"><span aria-hidden="true">◈</span> Discover</a>
+    <a href="#plan" class="nav-link" data-view="plan"><span aria-hidden="true">▦</span> Four-week plan</a>
+    <a href="#comfort" class="nav-link" data-view="comfort"><span aria-hidden="true">♫</span> Comfort mixes</a>
+    <a href="#profile" class="nav-link" data-view="profile"><span aria-hidden="true">◎</span> Your taste</a>
+  </nav>
+  <div class="side-sources"><p class="eyebrow">YOUR STARTING POINTS</p>
+    <a href="https://open.spotify.com/playlist/6d6IUUBMVASleQSKT5cFQo" target="_blank" rel="noopener noreferrer">Listen with me <span>↗</span></a>
+    <a href="https://open.spotify.com/playlist/594jwtzr3ltsi5446OnXsd" target="_blank" rel="noopener noreferrer">Timeless Grooves <span>↗</span></a>
+    <a href="https://open.spotify.com/playlist/1IGZ6L2FywF1h0IIcvaokl" target="_blank" rel="noopener noreferrer">My Shazam Tracks <span>↗</span></a>
+    <p class="small muted">Links connected. Songs haven’t been imported.</p>
+    <a class="text-link" href="#profile">Import playlist songs →</a>
+  </div>
+  <div class="side-bottom"><div class="avatar">N</div><div><strong>Navakanth’s space</strong><span class="small muted">Feedback saved on this device</span></div></div>
+</aside>
+<main id="main" tabindex="-1">
+  <header class="topbar"><span id="today"></span><span class="small">EN <span class="muted">/</span> TE <span class="muted">/</span> HI <span class="muted">/</span> TA</span></header>
+  <section id="view-discover" class="view">
+    <div class="page-heading"><div><p class="eyebrow accent">A LITTLE FAMILIAR. A LITTLE UNEXPECTED.</p><h1>Find your next repeat.</h1><p class="muted">New directions for your everyday listening.</p></div><button class="primary" id="refresh">Refresh picks <span aria-hidden="true">↻</span></button></div>
+    <div class="filters"><label>Language <select id="language"><option>All languages</option><option>Telugu</option><option>Tamil</option><option>Hindi</option><option>English</option></select></label><label>Mood <select id="mood"><option>Any mood</option><option>Reflective</option><option>Warm</option><option>Energetic</option></select></label><span class="filter-note small">Filters describe the seed artists, not every track.</span></div>
+    <div class="feature-panel"><div><span class="pill">YOUR FIRST LISTEN</span><h2 id="featured-name">Vivek Sagar</h2><p id="featured-note">Start with playful Telugu melodies and a relaxed pace.</p><div id="featured-link"></div></div><div class="feature-aside"><span class="eyebrow">THIS WEEK’S RITUAL</span><strong>3 artists.<br>20 minutes each.</strong><a href="#plan">Open your listening plan →</a></div></div>
+    <div class="section-heading"><div><h2>Fresh picks</h2><p class="muted small" id="feed-status" role="status">Starter selections · press Refresh picks for live catalog results.</p></div><span id="feed-badge" class="outline-pill">CURATED START</span></div>
+    <p class="notice" id="basis">Starting from your language mix and the provisional plan. Import songs or rate artists to make this more personal.</p>
+    <div id="feed" class="card-grid"></div>
+    <div class="feedback-prompt"><div><h3>More of this? Less of that?</h3><p class="muted">“Replay” brings similar moods forward. “Skip” removes that artist from fresh picks.</p></div><a class="secondary" href="#profile">See your taste profile</a></div>
+  </section>
+  <section id="view-plan" class="view" hidden>
+    <div class="page-heading"><div><p class="eyebrow accent">MAKE DISCOVERY A HABIT</p><h1>Your four-week plan.</h1><p class="muted">One artist on Monday, Wednesday, and Friday. Revisit favorites on the weekend.</p></div><span class="outline-pill" id="plan-count">0 / 12 explored</span></div>
+    <div class="week-tabs" role="group" aria-label="Choose listening week"></div>
+    <div class="section-heading"><div><h2 id="week-title"></h2><p id="week-description" class="muted"></p></div></div><div id="plan-cards" class="card-grid"></div>
+    <div class="feedback-prompt"><div><h3>Your Sunday check-in</h3><p class="muted">Who would you replay? Who would you skip? Rate this week’s artists to shape fresh picks.</p></div><a class="secondary" href="#discover">Find more music</a></div>
+  </section>
+  <section id="view-comfort" class="view" hidden>
+    <div class="page-heading"><div><p class="eyebrow accent">SOMETHING TO COME HOME TO</p><h1>Comfort, on repeat.</h1><p class="muted">Two suggested queues across languages. Play them in order or follow your mood.</p></div></div><p class="notice">These are provisional comfort mixes, not copies of your Spotify playlists.</p><div id="comfort-mixes" class="mix-grid"></div>
+  </section>
+  <section id="view-profile" class="view" hidden>
+    <div class="page-heading"><div><p class="eyebrow accent">LESS GUESSING. MORE YOU.</p><h1>Your taste, taking shape.</h1><p class="muted">Built from the songs you import and the feedback you give here.</p></div><button class="secondary" id="export">Download backup</button></div>
+    <div class="stats"><div><strong id="import-count">0</strong><span>Imported songs</span></div><div><strong id="liked-count">0</strong><span>Artists to replay</span></div><div><strong id="explored-count">0</strong><span>Plan artists explored</span></div></div>
+    <div class="profile-grid"><section class="panel"><h2>Your playlist songs</h2><p class="muted">Spotify song access isn’t connected. Import an exported CSV or paste tracks below. Everything stays on this device.</p>
+      <label>Source playlist<select id="import-source"><option>Listen with me 🎧</option><option>Timeless Grooves 🕰️</option><option>My Shazam Tracks</option></select></label>
+      <label class="file-label">Import playlist CSV<input type="file" id="csv-import" accept=".csv,text/csv"></label><p class="small muted">Headers: Artist Name(s) and Track Name, or Artist and Title. Maximum 2 MB.</p>
+      <label>Or paste one song per line<textarea id="paste-tracks" rows="4" placeholder="Artist — Song title"></textarea></label><button class="primary" id="import-paste">Add songs</button><p id="import-status" role="status" class="small muted"></p>
+    </section><section class="panel"><h2>What’s shaping your picks</h2><div id="taste-summary"></div><h3>Artist seeds</h3><p class="small muted">Add artists you want more of. These names help choose live catalog searches.</p><form id="seed-form"><label>Artist name<input id="seed-name" maxlength="100" placeholder="e.g. A.R. Rahman" required></label><label>Language<select id="seed-language"><option>Telugu</option><option>Tamil</option><option>Hindi</option><option>English</option></select></label><button class="secondary">Add artist</button></form><div id="seed-list" class="chips"></div></section></div>
+    <section class="panel spaced"><h2>Your feedback</h2><div id="ratings-list"></div></section>
+    <details class="panel spaced"><summary>Backup and how recommendations work</summary><p>Your ratings, imports, and explored artists are saved in this browser. They don’t sync between devices. Download a backup before clearing browser data.</p><label class="file-label">Restore a Side B backup<input id="restore" type="file" accept=".json,application/json"></label>
+      <p>Starter picks come from your four-week plan, not Spotify listening history. Live picks use the public iTunes catalog for song metadata only, then offer searches on YouTube, SoundCloud, and Bandcamp. Playback stays on those platforms.</p><p>Replay and skip ratings adjust artist and mood priorities locally. Imported artists become additional seeds. A daily rotation and refresh button vary the selection. This is a transparent rule-based recommender, not an AI or Spotify recommendation service.</p><p>Live results refresh when you visit after 24 hours or press Refresh picks. Availability depends on the catalog and your connection; unavailable results are clearly labeled. No account, secret API key, or subscription is required.</p>
+    </details>
+  </section>
+  <footer><span>SIDE B / A listening habit worth keeping.</span><span>Playlists inspire. Your feedback decides.</span></footer>
+</main><div id="toast" role="status" class="toast" hidden></div>
+<noscript><p>This dashboard needs JavaScript for recommendations and feedback. Your playlist links remain available above.</p></noscript>
+</body></html>
