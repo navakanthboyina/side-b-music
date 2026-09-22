@@ -1,4 +1,4 @@
-# Side B — Personal music discovery dashboard
+# Munna’s Grooves — Personal music discovery dashboard
 
 A standalone, dependency-free static dashboard designed for a **new GitHub repository**. No existing repository is required or modified.
 
