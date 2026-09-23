@@ -1,0 +1,7 @@
+node_modules/
+backend/dist/
+backend/.wrangler/
+.dev.vars*
+.env*
+*admin-token*
+playlist-seed.json

@@ -100,3 +100,7 @@ Label validation regression: the reported model copied the pipe-separated label 
 Candidate selection accepts numeric IDs, objects with IDs, or arrays of artist/title objects (including a `songs` wrapper). Named songs must match a supplied eligible candidate by normalized full credits and title. Model-provided ratings, explanations and metadata are ignored; saved feedback is never changed by AI output. Diagnostics distinguish already-rated/recent songs, songs outside the candidate pool, and malformed selections.
 
 Mixed listening: two weeks of six starter songs, with languages interleaved. Discover always mixes languages and requests 12 AI selections from up to 24 unseen catalog candidates. Actual AI batch size can be smaller when the model selects fewer eligible songs; no rule-based filler is labeled AI. Catalog mode requests up to 12 songs. Existing feedback and 14-day exclusions are preserved.
+
+## Shared room (deployment ready)
+
+The `backend/` Worker and `shared-app.mjs` implement one shared batch and shared song feedback with no visitor accounts. Server-side AI removes the WebGPU requirement for visitors. See [backend/README.md](backend/README.md) for free-tier deployment, owner-only playlist setup, behavior, and validation. Until the owner deploys the backend and sets the public `apiBase` in `shared-config.js`, the existing browser-local dashboard remains active. No playlist CSVs or credentials are committed.

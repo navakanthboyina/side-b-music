@@ -1,0 +1,13 @@
+{
+  "name": "munnas-grooves-shared",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "wrangler login",
+    "db:create": "wrangler d1 create munnas-grooves --binding DB --update-config",
+    "db:migrate": "wrangler d1 migrations apply DB --remote",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir dist"
+  },
+  "devDependencies": { "wrangler": "4.137.0" }
+}
