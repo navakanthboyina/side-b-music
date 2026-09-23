@@ -16,3 +16,7 @@ assert.equal(parseCandidatePicks('{"songs":[{"artist":"Artist A","title":"Unseen
 assert.throws(()=>parseCandidatePicks('[{"artist":"Unknown Artist","title":"Unseen song"}]',profile),e=>e.diagnostics.rejected.outsidePool===1);
 assert.throws(()=>parseCandidatePicks('[{"artist":"Artist A","title":"Rated song"}]',profile),e=>e.diagnostics.rejected.alreadyRatedOrRecent===1);
 console.log('PASS: fenced song arrays and song objects resolve only to eligible candidates; AI ratings and metadata are ignored.');
+
+const large={...profile,feedback:[],recentSongs:[],candidates:Array.from({length:24},(_,i)=>({artist:'Example '+i,title:'Song '+i}))};
+assert.equal(parseCandidatePicks(JSON.stringify({ids:Array.from({length:24},(_,i)=>i+1)}),large).length,12);
+assert.match(candidateMessages(large)[0].content,/Choose 12 distinct songs/);

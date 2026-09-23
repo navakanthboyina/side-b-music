@@ -39,7 +39,7 @@ function parseSongsInternal(text,profile) {
     out.push({name:t.artist.trim(),artist:t.artist.trim(),title:t.title.trim(),language,mood,reason:t.reason.trim(),origin:'ai'});
   }
   if(!out.length){const details=Object.entries(rejected).filter(([,n])=>n).map(([k,n])=>k+': '+n).join(', ');const error=Error('AI returned no usable songs ('+(details||'empty song list')+'). Open AI diagnostic details below.');error.rejected=rejected;throw error;}
-  return out.slice(0,6);
+  return out.slice(0,12);
 }
 
 export function parseSongs(text,profile){
@@ -53,7 +53,7 @@ export function parseSongs(text,profile){
 // Rank existing catalog entries; the model cannot introduce a different song or label.
 export function candidateMessages(profile){
  const candidates=profile.candidates.map((t,i)=>({id:i+1,artist:t.artist,title:t.title,genre:t.genre||''}));
- return [{role:'system',content:'Choose up to 6 songs from the provided candidates based on the listener\'s individual song likes and dislikes. Prefer shared musical qualities and a mix of artists. A liked or disliked song does not rate its whole artist. Output only JSON with candidate IDs, for example {"ids":[2,5,1]}. Use only IDs supplied in candidates. Do not return song names, new songs, explanations, language or mood labels. If there are no likes, choose a varied discovery selection.'},{role:'user',content:JSON.stringify({feedback:profile.feedback,language:profile.language,mood:profile.mood,candidates})}];
+ return [{role:'system',content:'Choose 12 distinct songs (or all candidates if fewer than 12) from the provided candidates based on the listener\'s individual song likes and dislikes. Mix languages in one ranked list without language sections. Prefer shared musical qualities and a mix of artists. A liked or disliked song does not rate its whole artist. Output only JSON with candidate IDs, for example {"ids":[2,5,1]}. Use only IDs supplied in candidates. Do not return song names, new songs, explanations, language or mood labels. If there are no likes, choose a varied discovery selection.'},{role:'user',content:JSON.stringify({feedback:profile.feedback,language:profile.language,mood:profile.mood,candidates})}];
 }
 export function parseCandidatePicks(text,profile){
  let data;
@@ -80,6 +80,6 @@ export function parseCandidatePicks(text,profile){
 
   seen.add(id);out.push({...t,name:t.artist,origin:'ai',reason:profile.provisional?'AI selected this song for a provisional discovery mix.':'AI selected this song from unseen catalog tracks using your individual song feedback.'});
  }
- if(!out.length){const error=Error('AI could not select valid candidate IDs. No repeated or invented songs were substituted.');error.diagnostics={version:'candidate-formats-1',model:MODEL,candidateCount:profile.candidates.length,rejected,response:String(text).slice(0,12000)};throw error;}
- return out.slice(0,6);
+ if(!out.length){const error=Error('AI could not select valid candidate IDs. No repeated or invented songs were substituted.');error.diagnostics={version:'mixed-12-1',model:MODEL,candidateCount:profile.candidates.length,rejected,response:String(text).slice(0,12000)};throw error;}
+ return out.slice(0,12);
 }

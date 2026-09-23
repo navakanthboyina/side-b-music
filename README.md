@@ -28,7 +28,7 @@ WebLLM: https://webllm.mlc.ai/docs/user/get_started.html
 
 ## Features
 
-- Four-week plan with 12 discovery artists, track search links, and explored checkboxes.
+- Two-week plan with 12 discovery artists, track search links, and explored checkboxes.
 - Two ordered comfort mixes.
 - Live song recommendations: public iTunes Search API metadata queried through its documented JSONP interface. Playback/search links use YouTube, SoundCloud, and Bandcamp.
 - Individual song likes, dislikes and Already know feedback; no artist-wide rating effects.
@@ -98,3 +98,5 @@ AI failures now expose opt-in diagnostic details on the page: generated response
 Label validation regression: the reported model copied the pipe-separated label options from the prompt. The prompt now shows single example values and separate allowed choices. Invalid or ambiguous labels become Unspecified / Any mood. They are accepted only when the corresponding filter is unrestricted; explicit language/mood filters still exclude unknown values. An equivalent fixture with fictional songs is covered by `tests/reported-labels.test.mjs`. Model-generated fit explanations remain unverified estimates.
 
 Candidate selection accepts numeric IDs, objects with IDs, or arrays of artist/title objects (including a `songs` wrapper). Named songs must match a supplied eligible candidate by normalized full credits and title. Model-provided ratings, explanations and metadata are ignored; saved feedback is never changed by AI output. Diagnostics distinguish already-rated/recent songs, songs outside the candidate pool, and malformed selections.
+
+Mixed listening: two weeks of six starter songs, with languages interleaved. Discover always mixes languages and requests 12 AI selections from up to 24 unseen catalog candidates. Actual AI batch size can be smaller when the model selects fewer eligible songs; no rule-based filler is labeled AI. Catalog mode requests up to 12 songs. Existing feedback and 14-day exclusions are preserved.

@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111412">
-  <meta name="description" content="A personal music discovery dashboard: four-week listening plans, fresh catalog picks, playlist imports, and feedback that shapes what comes next.">
+  <meta name="description" content="A personal music discovery dashboard: two-week listening plans, fresh catalog picks, playlist imports, and feedback that shapes what comes next.">
   <title>Munna’s Grooves — Your listening room</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111412'/%3E%3Cpath d='M9 12v8m7-13v18m7-13v8' stroke='%23c9f76b' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
-  <script defer src="data.js"></script><script defer src="app.js?v=candidate-formats-1"></script>
+  <script defer src="data.js?v=mixed-12-1"></script><script defer src="app.js?v=mixed-12-1"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to music</a>
@@ -16,7 +16,7 @@
   <p class="eyebrow side-caption">YOUR LISTENING ROOM</p>
   <nav aria-label="Main navigation">
     <a href="#discover" class="nav-link active" data-view="discover"><span aria-hidden="true">◈</span> Discover</a>
-    <a href="#plan" class="nav-link" data-view="plan"><span aria-hidden="true">▦</span> Four-week plan</a>
+    <a href="#plan" class="nav-link" data-view="plan"><span aria-hidden="true">▦</span> Two-week plan</a>
     <a href="#comfort" class="nav-link" data-view="comfort"><span aria-hidden="true">♫</span> Comfort mixes</a>
     <a href="#profile" class="nav-link" data-view="profile"><span aria-hidden="true">◎</span> Your taste</a>
   </nav>
@@ -41,7 +41,7 @@
       <p id="ai-status" role="status" class="small">Choose Refresh picks to load AI and generate a batch. No model downloads until you click.</p><button id="clear-ai" class="secondary">Clear AI downloads</button><span class="small muted"> Keeps your song ratings.</span> <button id="cancel-ai" class="secondary" hidden>Stop AI</button>
     </section>
     <details id="ai-diagnostics" class="panel" hidden><summary>AI diagnostic details</summary><p class="small muted">Shows the generated reply and rejection reasons, not your full profile. Nothing is sent automatically. Review before copying or sharing.</p><pre id="ai-diagnostic-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto"></pre></details>
-    <div class="filters"><label>Language <select id="language"><option>All languages</option><option>Telugu</option><option>Tamil</option><option>Hindi</option><option>English</option></select></label><label>Mood <select id="mood"><option>Any mood</option><option>Reflective</option><option>Warm</option><option>Energetic</option></select></label><span class="filter-note small">Filters describe the seed artists, not every track.</span></div>
+    <div class="filters"><span class="small">All languages mixed together</span><label>Mood <select id="mood"><option>Any mood</option><option>Reflective</option><option>Warm</option><option>Energetic</option></select></label><span class="filter-note small">Mood describes the seed artists, not every track.</span></div>
     <div class="feature-panel"><div><span class="pill">YOUR FIRST LISTEN</span><h2 id="featured-name">Vivek Sagar</h2><p id="featured-note">Start with playful Telugu melodies and a relaxed pace.</p><div id="featured-link"></div></div><div class="feature-aside"><span class="eyebrow">THIS WEEK’S RITUAL</span><strong>3 artists.<br>20 minutes each.</strong><a href="#plan">Open your listening plan →</a></div></div>
     <div class="section-heading"><div><h2>Fresh picks</h2><p class="muted small" id="feed-status" role="status">Starter selections · press Refresh picks for live catalog results.</p></div><span id="feed-badge" class="outline-pill">CURATED START</span></div>
     <p class="notice" id="basis">Like individual songs to personalize AI picks. No playlist import is required.</p>
@@ -49,7 +49,7 @@
     <div class="feedback-prompt"><div><h3>More of this? Less of that?</h3><p class="muted">“Like” asks for related songs. “Not for me” excludes only that song. Other songs by the same artist keep their own feedback.</p></div><a class="secondary" href="#profile">See your taste profile</a></div>
   </section>
   <section id="view-plan" class="view" hidden>
-    <div class="page-heading"><div><p class="eyebrow accent">MAKE DISCOVERY A HABIT</p><h1>Your four-week plan.</h1><p class="muted">One artist on Monday, Wednesday, and Friday. Revisit favorites on the weekend.</p></div><span class="outline-pill" id="plan-count">0 / 12 explored</span></div>
+    <div class="page-heading"><div><p class="eyebrow accent">MAKE DISCOVERY A HABIT</p><h1>Your two-week plan.</h1><p class="muted">Six songs each week, with languages mixed together. Revisit favorites on Sunday.</p></div><span class="outline-pill" id="plan-count">0 / 12 explored</span></div>
     <div class="week-tabs" role="group" aria-label="Choose listening week"></div>
     <div class="section-heading"><div><h2 id="week-title"></h2><p id="week-description" class="muted"></p></div></div><div id="plan-cards" class="card-grid"></div>
     <div class="feedback-prompt"><div><h3>Your Sunday check-in</h3><p class="muted">Who would you replay? Who would you skip? Rate this week’s songs to shape AI picks.</p></div><a class="secondary" href="#discover">Find more music</a></div>
@@ -67,7 +67,7 @@
       <label>Or paste one song per line<textarea id="paste-tracks" rows="4" placeholder="Artist — Song title"></textarea></label><button class="primary" id="import-paste">Add songs</button><p id="import-status" role="status" class="small muted"></p>
     </section><section class="panel"><h2>Optional Catalog sources</h2><div id="taste-summary"></div><h3>Artist seeds</h3><p class="small muted">Used only in Catalog mode. AI mode learns from your individual song feedback instead.</p><form id="seed-form"><label>Artist name<input id="seed-name" maxlength="100" placeholder="e.g. A.R. Rahman" required></label><label>Language<select id="seed-language"><option>Telugu</option><option>Tamil</option><option>Hindi</option><option>English</option></select></label><button class="secondary">Add artist</button></form><div id="seed-list" class="chips"></div></section></div>
     <details class="panel spaced"><summary>Backup and how recommendations work</summary><p>Your ratings, imports, explored artists, and 14-day recommendation history are saved in this browser. They don’t sync between devices. Download a backup before clearing browser data.</p><label class="file-label">Restore a Munna’s Grooves backup<input id="restore" type="file" accept=".json,application/json"></label>
-      <p>Starter picks come from your four-week plan, not Spotify listening history. Live picks use the public iTunes catalog for song metadata only, then offer searches on YouTube, SoundCloud, and Bandcamp. Playback stays on those platforms.</p><p>Likes, dislikes and Already know apply to one song, never its whole artist. Older artist-level ratings are archived and ignored. Imported artists are optional seeds for Catalog mode only. Fresh picks exclude songs shown on this device during the previous 14 days. Refresh rotates through artists and remembers your history after reloads. If no unseen songs are found, it says so instead of repeating them. Your current saved batch can stay visible until you refresh; the four-week plan and comfort mixes remain fixed. AI mode runs lightweight Qwen2.5 locally through WebLLM to suggest specific songs and explain their fit to the songs you liked. Catalog mode uses rules without AI. Neither mode connects to Spotify recommendations.</p><p>Catalog results refresh when you visit after 24 hours or press Refresh picks. AI batches generate when you press Refresh picks; saved results remain on reopen. AI does not run while the page is closed. Availability depends on the catalog and your connection; unavailable results are clearly labeled. No account, secret API key, or subscription is required.</p>
+      <p>Starter picks come from your two-week plan, not Spotify listening history. Live picks use the public iTunes catalog for song metadata only, then offer searches on YouTube, SoundCloud, and Bandcamp. Playback stays on those platforms.</p><p>Likes, dislikes and Already know apply to one song, never its whole artist. Older artist-level ratings are archived and ignored. Imported artists are optional seeds for Catalog mode only. Fresh picks exclude songs shown on this device during the previous 14 days. Refresh rotates through artists and remembers your history after reloads. If no unseen songs are found, it says so instead of repeating them. Your current saved batch can stay visible until you refresh; the two-week plan and comfort mixes remain fixed. AI mode runs lightweight Qwen2.5 locally through WebLLM to suggest specific songs and explain their fit to the songs you liked. Catalog mode uses rules without AI. Neither mode connects to Spotify recommendations.</p><p>Catalog results refresh when you visit after 24 hours or press Refresh picks. AI batches generate when you press Refresh picks; saved results remain on reopen. AI does not run while the page is closed. Availability depends on the catalog and your connection; unavailable results are clearly labeled. No account, secret API key, or subscription is required.</p>
     </details>
   </section>
   <footer><span>MUNNA’S GROOVES / A listening habit worth keeping.</span><span>Playlists inspire. Your feedback decides.</span></footer>
