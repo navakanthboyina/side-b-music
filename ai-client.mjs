@@ -17,7 +17,7 @@ export async function recommend(profile, progress, signal) {
         worker ||= new Worker(new URL('./ai-worker.mjs',import.meta.url),{type:'module'});
         worker.onmessage=({data})=>{
           if(data.type==='progress')progress(data.text);
-          else if(data.type==='result')finish(null,data.artists);
+          else if(data.type==='result')finish(null,data.songs);
           else if(data.type==='error')finish(Error('AI could not finish. Try again, or choose Catalog picks. '+String(data.text).slice(0,180)));
         };
         worker.onerror=()=>finish(Error('AI could not load. Check your connection and available device memory, or choose Catalog picks.'));

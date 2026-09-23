@@ -5,12 +5,16 @@ A standalone static dashboard (no build step) designed for a **new GitHub reposi
 ## Free AI mode
 
 1. Open Discover and select **AI picks — local model**.
-2. Import playlist tracks or add favorite artists under Your taste. Playlist URLs alone do not import songs.
+2. Like a few individual songs in Discover or the listening plan. No import is required. Playlist URLs alone do not give the AI your playlist contents.
 3. Press **Refresh picks** to download/load the model and generate recommendations. Use **Stop AI** to cancel.
 
 AI runs on the visitor’s device using Qwen2.5-3B-Instruct (4-bit) and WebLLM 0.2.85. There is no paid API, server bill for inference, API key, or provider account. The initial model weights total about 1.74 GB; allow roughly 2 GB for download/cache and around 3 GB of available GPU memory. WebGPU with shader-f16 is required. Device support and speed vary. Model files are cached by WebLLM when browser storage permits; eviction can require another download. Downloads and local computation still consume data, battery, and device resources.
 
-The LLM proposes up to three artists and explains the fit using a bounded sample of imported tracks, common playlist artists, added favorites, ratings, and current filters. Suggestions are matched to artist credits in the iTunes catalog before displaying up to three tracks per artist. Song selection within those artists still uses catalog rules; the AI does not listen to audio. Language, mood and fit explanations are model estimates and can be wrong. Sparse profiles are explicitly treated as provisional.
+The LLM proposes up to six specific songs from your song-level feedback, with explanations referencing liked songs and estimated shared qualities. It requests cross-artist discovery, with at most two suggestions per credited artist. Each suggestion must match both the normalized title and artist credits in the iTunes catalog; unmatched suggestions are discarded, never substituted with random tracks by that artist. Similarity explanations are model estimates, not audio analysis. Sparse profiles remain provisional.
+
+Song feedback uses normalized artist credits plus title as its identity. Like, Not for me, Already know and Undo affect only that song across cards and reloads. Negative feedback never excludes the whole artist. Older artist ratings remain in backups but are ignored because they cannot be reliably converted into song ratings. The most recent positive and negative song ratings form a bounded AI prompt; all rated songs are excluded from new AI discovery results. Skipped/known songs are excluded in Catalog mode too.
+
+Automatic Spotify playlist sync is not implemented. The website has no Spotify OAuth app or authorization; the ChatGPT Spotify connection does not grant this site API access. Spotify’s developer policy restricts feeding Spotify Content into ML/AI models (https://developer.spotify.com/policy). Existing optional playlist imports remain available for the rule-based Catalog mode and are excluded from AI prompts. AI personalization now uses song feedback submitted on this dashboard, without requiring imported files.
 
 AI runs **only after a click**, never as a background job or automatic large download. Saved picks remain on reopen; press Refresh picks for another AI batch. Model inference stays local, while the WebLLM library, model weights and runtime come from jsDelivr, Hugging Face and MLC’s model-library host. Selected artist search terms go to Apple’s iTunes API. Playback/search links go to YouTube, SoundCloud or Bandcamp when opened. No full taste profile is sent to an AI server.
 
@@ -25,10 +29,10 @@ WebLLM: https://webllm.mlc.ai/docs/user/get_started.html
 - Four-week plan with 12 discovery artists, track search links, and explored checkboxes.
 - Two ordered comfort mixes.
 - Live song recommendations: public iTunes Search API metadata queried through its documented JSONP interface. Playback/search links use YouTube, SoundCloud, and Bandcamp.
-- Artist, language, and mood priorities adjusted by Replay, Skip, and Already familiar ratings.
+- Individual song likes, dislikes and Already know feedback; no artist-wide rating effects.
 - CSV or pasted-track imports from the three specified Spotify playlists. **No Spotify track access or background sync is claimed.**
 - Device-local profile and progress, with validated JSON backup/restore.
-- Mobile layout, keyboard navigation, loading/error/empty states, and optional WebMCP artist-rating tool.
+- Mobile layout, keyboard navigation, loading/error/empty states, and optional WebMCP song-rating tool.
 
 ## Run locally
 
@@ -55,7 +59,7 @@ Do not upload local backups, imported playlist CSV files, or credentials. Rating
 
 The starter profile is deliberately provisional: only the English, Telugu, Hindi, and Tamil language mix was confirmed. No listening-history ranking is used. Live queries return songs by selected seed artists, not a claim of previously unknown artists or newly released songs. Artist identity is matched against catalog credits to avoid unrelated search results. Repeated titles within an artist's results are removed.
 
-In Catalog mode, the app chooses up to three seeds and up to three tracks per seed. Replay ratings increase that artist and matching starter moods; Skip excludes an artist from fresh picks; Known reduces its priority. Imported and explicitly added artists receive extra weight. A daily hash and manual-refresh counter vary the selection. Language/mood filters describe the seed, not the language or mood of every returned track. Imported artists with unknown classification appear under All languages / Any mood; an explicit artist seed can assign a language.
+In Catalog mode, the app chooses up to three artist search seeds and up to three tracks per seed. Imported and explicitly added artists receive extra weight. Song likes do not boost every song by that artist; AI mode is the song-similarity path. Language/mood filters in Catalog mode describe the seed, not every returned track. Imported artists with unknown classification appear under All languages / Any mood.
 
 In Catalog mode, live metadata is fetched on visits after 24 hours or on manual refresh. AI mode generates only on manual refresh. There is no background job running while the dashboard is closed. When live lookup fails, an explicit unavailable state is shown; the fixed plan and comfort mixes remain accessible. The app does not use a paid API, secret key, embedded Apple artwork, Apple audio previews, or Spotify OAuth.
 
@@ -76,4 +80,6 @@ The previous release did not record exposure history. On upgrade, only its lates
 
 ## Checks
 
-Run `node --test tests/ai.test.mjs` for AI parsing, preference filters, unsupported-device handling, and cancellation tests. These use a mocked worker; they do not validate on-device model quality or GPU performance.
+Run `node --test tests/ai.test.mjs` for song-based AI parsing, preference filters, unsupported-device handling, and cancellation tests. These use a mocked worker; they do not validate on-device model quality or GPU performance.
+
+Song-feedback UI regression: install the test-only dependency with `npm install --no-save jsdom`, then run `node tests/song-feedback.cjs`. It checks same-artist song independence, reloads, undo, old-rating migration and exact song matching with mocked AI/catalog responses. No dependency is needed to serve the dashboard.
