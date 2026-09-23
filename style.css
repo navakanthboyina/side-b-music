@@ -5,3 +5,5 @@
 
 /* Two-line wordmark keeps the longer name readable on every screen. */
 .brand>span{font-size:1.4rem;line-height:1.05;letter-spacing:-.035em}
+
+.ai-panel{margin-bottom:24px}.ai-panel label{max-width:340px}.ai-panel h2{margin-top:0}.ai-panel a{color:var(--accent, #c9f76b)}
