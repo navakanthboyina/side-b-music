@@ -6,7 +6,7 @@ const base={version:1,engine:'ai',ratings:{sameartist:{name:'Same Artist',value:
 function boot(saved){const dom=new JSDOM(fs.readFileSync(root+'index.html','utf8'),{url:'https://example.test',runScripts:'outside-only'}),w=dom.window,d=w.document;w.localStorage.setItem('side-b-v1',saved);w.setTimeout=()=>0;w.__core=core;
 w.__client={stop(){},async recommend(p){lastProfile=p;if(scenario==='failure'){const error=Error('AI unavailable');error.diagnostics={rejected:{invalidLabels:1},response:'<img src=x onerror=alert(1)>'};throw error;}return core.parseCandidatePicks('{"ids":[1]}',p);}};
 d.head.append=el=>{const u=new URL(el.src);assert.equal(u.searchParams.get('attribute'),'artistTerm');queueMicrotask(()=>w[u.searchParams.get('callback')]({results:[{artistName:u.searchParams.get('term'),trackName:'New Song'},{artistName:'Wrong Artist',trackName:'Unrelated Track'},{artistName:'Wrong Artist',trackName:'Nonexistent'}]}));};
-w.eval(fs.readFileSync(root+'data.js','utf8'));w.eval(fs.readFileSync(root+'app.js','utf8').replaceAll("import('./ai-client.mjs?v=candidates-1')","Promise.resolve(window.__client)").replaceAll("import('./ai-core.mjs?v=candidates-1')","Promise.resolve(window.__core)"));
+w.eval(fs.readFileSync(root+'data.js','utf8'));w.eval(fs.readFileSync(root+'app.js','utf8').replaceAll("import('./ai-client.mjs?v=candidate-formats-1')","Promise.resolve(window.__client)").replaceAll("import('./ai-core.mjs?v=candidate-formats-1')","Promise.resolve(window.__core)"));
 return {dom,w,d};}
 let {dom,w,d}=boot(JSON.stringify(base));
 assert.equal(d.querySelectorAll('#feed .music-card').length,3); // Old artist skip is ignored.

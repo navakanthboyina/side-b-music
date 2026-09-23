@@ -58,14 +58,28 @@ export function candidateMessages(profile){
 export function parseCandidatePicks(text,profile){
  let data;
  try{data=JSON.parse(String(text).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{data=null;}
- const ids=Array.isArray(data?.ids)?data.ids:[],seen=new Set(),out=[];
+ const selections=Array.isArray(data)?data:Array.isArray(data?.ids)?data.ids:Array.isArray(data?.songs)?data.songs:[];
+ const seen=new Set(),out=[],rejected={invalidSelection:0,outsidePool:0,alreadyRatedOrRecent:0,duplicate:0};
+ const candidateIds=new Map(profile.candidates.map((t,i)=>[songKey(t),i+1]));
  const excluded=new Set([...profile.feedback,...profile.recentSongs].map(songKey));
- for(const raw of ids){
-  const id=typeof raw==='number'?raw:typeof raw==='string'&&/^\d+$/.test(raw.trim())?Number(raw):NaN;
-  if(!Number.isInteger(id)||id<1||id>profile.candidates.length||seen.has(id))continue;
-  const t=profile.candidates[id-1];if(excluded.has(songKey(t)))continue;
+ for(const raw of selections.slice(0,30)){
+  let value=raw;
+  if(raw&&typeof raw==='object'){
+   if(typeof raw.artist==='string'&&typeof raw.title==='string'){
+    const key=songKey(raw);
+    if(excluded.has(key)){rejected.alreadyRatedOrRecent++;continue;}
+    value=candidateIds.get(key);
+    if(value===undefined){rejected.outsidePool++;continue;}
+   }else value=raw.id;
+  }
+  const id=typeof value==='number'?value:typeof value==='string'&&/^\d+$/.test(value.trim())?Number(value):NaN;
+  if(!Number.isInteger(id)||id<1||id>profile.candidates.length){rejected.invalidSelection++;continue;}
+  if(seen.has(id)){rejected.duplicate++;continue;}
+  const t=profile.candidates[id-1];if(excluded.has(songKey(t))){rejected.alreadyRatedOrRecent++;continue;}
+  // Use catalog metadata only. Never apply model-generated ratings or other fields.
+
   seen.add(id);out.push({...t,name:t.artist,origin:'ai',reason:profile.provisional?'AI selected this song for a provisional discovery mix.':'AI selected this song from unseen catalog tracks using your individual song feedback.'});
  }
- if(!out.length){const error=Error('AI could not select valid candidate IDs. No repeated or invented songs were substituted.');error.diagnostics={version:'candidates-1',model:MODEL,candidateCount:profile.candidates.length,response:String(text).slice(0,12000)};throw error;}
+ if(!out.length){const error=Error('AI could not select valid candidate IDs. No repeated or invented songs were substituted.');error.diagnostics={version:'candidate-formats-1',model:MODEL,candidateCount:profile.candidates.length,rejected,response:String(text).slice(0,12000)};throw error;}
  return out.slice(0,6);
 }

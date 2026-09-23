@@ -111,7 +111,7 @@ async function refresh(){
    $('#ai-status').textContent='Finding unseen catalog tracks before starting AI…';
    const candidates=await unseenCandidates(aiController.signal);
    if(snapshot!==profileKey())throw Error('Your taste or filters changed. Refresh again.');
-   const [client,core]=await Promise.all([import('./ai-client.mjs?v=candidates-1'),import('./ai-core.mjs?v=candidates-1')]);
+   const [client,core]=await Promise.all([import('./ai-client.mjs?v=candidate-formats-1'),import('./ai-core.mjs?v=candidate-formats-1')]);
    selected=await client.recommend({...core.tasteProfile(state),candidates},text=>$('#ai-status').textContent=text,aiController.signal);
    // Validate all current exclusions again, including feedback outside the prompt sample.
    selected=selected.filter(a=>matches(a)&&!getSongRating(a));
@@ -163,12 +163,12 @@ $('#recommendation-mode').value=state.engine;
 $('#recommendation-mode').addEventListener('change',()=>{
  state.engine=$('#recommendation-mode').value;save();
  $('#ai-status').textContent=state.engine==='ai'?'Refresh picks loads local AI and generates a new batch. Your existing results remain until then.':'Catalog mode uses artist-search rules, without AI.';
- if(state.engine==='catalog')import('./ai-client.mjs?v=candidates-1').then(m=>m.stop()).catch(()=>{});
+ if(state.engine==='catalog')import('./ai-client.mjs?v=candidate-formats-1').then(m=>m.stop()).catch(()=>{});
 });
 $('#clear-ai').addEventListener('click',async()=>{
  if(busy)return;busy=true;$('#clear-ai').disabled=true;$('#refresh').disabled=true;$('#recommendation-mode').disabled=true;
  $('#ai-status').textContent='Clearing only AI model downloads. Keeping your song feedback…';
- try{const client=await import('./ai-client.mjs?v=candidates-1');await client.clearDownloads();$('#ai-status').textContent='AI downloads cleared. Your song ratings are unchanged. Click Refresh picks to load Lightweight AI.';}
+ try{const client=await import('./ai-client.mjs?v=candidate-formats-1');await client.clearDownloads();$('#ai-status').textContent='AI downloads cleared. Your song ratings are unchanged. Click Refresh picks to load Lightweight AI.';}
  catch(error){$('#ai-status').textContent=error.message;}
  finally{busy=false;$('#clear-ai').disabled=false;$('#refresh').disabled=false;$('#recommendation-mode').disabled=false;}
 });
