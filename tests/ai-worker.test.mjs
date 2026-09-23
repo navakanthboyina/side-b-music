@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {MODEL,messagesFor,parseSongs} from '../ai-core.mjs';
+import {MODEL,messagesFor,parseSongs,candidateMessages,parseCandidatePicks} from '../ai-core.mjs';
 import {LEGACY_MODEL,isQuotaError,QUOTA_MESSAGE} from '../ai-storage.mjs';
 const source=fs.readFileSync(new URL('../ai-worker.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
 const profile={feedback:[],recentSongs:[],language:'All languages',mood:'Any mood',provisional:true};
-let output=JSON.stringify({songs:[{artist:'Test Artist',title:'Test Song',language:'English',mood:'Warm',reason:'Provisional warm suggestion.'}]}),events=[],requests=[];
-const context={MODEL,messagesFor,parseSongs,LEGACY_MODEL,isQuotaError,QUOTA_MESSAGE,clearModelDownloads:async()=>{},prebuiltAppConfig:{model_list:[]},self:{caches:{},postMessage:e=>events.push(e)},CreateMLCEngine:async()=>({chat:{completions:{create:async request=>{requests.push(request);if('response_format' in request)throw Error('Grammar matcher must not be invoked');return {choices:[{message:{content:output}}]};}}}})};
+let output=JSON.stringify({songs:[{artist:'Test Artist',title:'Test Song',language:'English',mood:'Warm',reason:'Provisional warm suggestion.'}]}),events=[],requests=[],outputs=[];
+const context={MODEL,messagesFor,parseSongs,candidateMessages,parseCandidatePicks,LEGACY_MODEL,isQuotaError,QUOTA_MESSAGE,clearModelDownloads:async()=>{},prebuiltAppConfig:{model_list:[]},self:{caches:{},postMessage:e=>events.push(e)},CreateMLCEngine:async()=>({chat:{completions:{create:async request=>{requests.push(request);if('response_format' in request)throw Error('Grammar matcher must not be invoked');return {choices:[{message:{content:outputs.length?outputs.shift():output}}]};}}}})};
 vm.runInNewContext(source,context);
 await context.self.onmessage({data:{profile}});
 assert.equal(requests.length,1);assert.equal(events.at(-1).type,'result');assert.equal(events.at(-1).songs[0].title,'Test Song');
@@ -14,3 +14,12 @@ output='Not valid JSON';events=[];
 await context.self.onmessage({data:{profile}});
 assert.equal(events.at(-1).type,'error');assert.match(events.at(-1).text,/format/);assert(!events.some(e=>e.type==='result'));
 console.log('PASS: worker avoids grammar matcher, accepts validated song JSON, and rejects malformed output.');
+
+const cp={...profile,candidates:[{artist:'Test Artist',title:'Unseen One'},{artist:'Other Artist',title:'Unseen Two'}]};
+outputs=['{"songs":[]}','{"ids":[2]}'];events=[];const before=requests.length;
+await context.self.onmessage({data:{profile:cp}});
+assert.equal(requests.length-before,2);assert.equal(events.at(-1).songs[0].title,'Unseen Two');
+outputs=['{"ids":[999]}','{"ids":[999]}'];events=[];const beforeFailure=requests.length;
+await context.self.onmessage({data:{profile:cp}});
+assert.equal(requests.length-beforeFailure,2);assert.equal(events.at(-1).type,'error');
+console.log('PASS: invalid selection gets one corrective retry, never an endless loop or fabricated fallback.');

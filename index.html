@@ -7,7 +7,7 @@
   <title>Munna’s Grooves — Your listening room</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111412'/%3E%3Cpath d='M9 12v8m7-13v18m7-13v8' stroke='%23c9f76b' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
-  <script defer src="data.js"></script><script defer src="app.js?v=labels-fix-1"></script>
+  <script defer src="data.js"></script><script defer src="app.js?v=candidates-1"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to music</a>
@@ -36,8 +36,8 @@
     <section class="panel ai-panel" aria-labelledby="ai-title">
       <p class="eyebrow accent">FREE AI · RUNS ON YOUR DEVICE</p><h2 id="ai-title">A little help finding your next favorite.</h2>
       <label>Recommendation mode<select id="recommendation-mode"><option value="ai">AI picks — Lightweight AI</option><option value="catalog">Catalog picks — no AI</option></select></label>
-      <p class="small muted">AI suggests individual songs from your song likes and dislikes, including related songs by other artists, then verifies their titles and credits in the catalog. No subscription or API key. Lightweight AI uses a much smaller model, with roughly 280 MB of model weights and around 1 GB of GPU memory required. Allow extra browser storage for supporting files. It needs a compatible WebGPU device. Loading can take several minutes; use Wi-Fi. This smaller model may know fewer songs, especially regional or obscure tracks.</p>
-      <p class="small muted">Your taste is processed locally. Model files come from external hosts; artist searches go to iTunes. AI fit explanations and language/mood labels are estimates, not audio analysis. No playlist import is required: like a few songs to start. <a href="#profile">See your song feedback →</a></p>
+      <p class="small muted">The catalog supplies real, unseen songs first. AI then selects from those songs using your individual likes and dislikes, including choices across artists. No subscription or API key. Lightweight AI uses a much smaller model, with roughly 280 MB of model weights and around 1 GB of GPU memory required. Allow extra browser storage for supporting files. It needs a compatible WebGPU device. Loading can take several minutes; use Wi-Fi. This smaller model may know fewer songs, especially regional or obscure tracks.</p>
+      <p class="small muted">Your taste is processed locally. Model files come from external hosts; artist searches go to iTunes. Language and mood filters describe the catalog search direction, not verified audio features. AI ranks song metadata; it does not listen to audio. No playlist import is required: like a few songs to start. <a href="#profile">See your song feedback →</a></p>
       <p id="ai-status" role="status" class="small">Choose Refresh picks to load AI and generate a batch. No model downloads until you click.</p><button id="clear-ai" class="secondary">Clear AI downloads</button><span class="small muted"> Keeps your song ratings.</span> <button id="cancel-ai" class="secondary" hidden>Stop AI</button>
     </section>
     <details id="ai-diagnostics" class="panel" hidden><summary>AI diagnostic details</summary><p class="small muted">Shows the generated reply and rejection reasons, not your full profile. Nothing is sent automatically. Review before copying or sharing.</p><pre id="ai-diagnostic-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto"></pre></details>

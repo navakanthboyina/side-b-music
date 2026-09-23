@@ -75,6 +75,29 @@ function render(){renderFeed();renderPlan();renderProfile();}
 function navigate(){const hash=location.hash.slice(1),v=['discover','plan','comfort','profile'].includes(hash)?hash:'discover';document.querySelectorAll('.view').forEach(s=>s.hidden=s.id!=='view-'+v);document.querySelectorAll('.nav-link').forEach(a=>{a.classList.toggle('active',a.dataset.view===v);if(a.dataset.view===v)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});document.title='Munna’s Grooves — '+({discover:'Discover',plan:'Four-week plan',comfort:'Comfort mixes',profile:'Your taste'})[v];}
 function catalog(params){return new Promise((resolve,reject)=>{const callback='sideB_'+crypto.randomUUID().replace(/-/g,''),script=document.createElement('script');let settled=false;const cleanup=()=>{script.remove();clearTimeout(timer);window[callback]=()=>{};setTimeout(()=>delete window[callback],60000);};const fail=()=>{if(settled)return;settled=true;cleanup();reject(Error('Catalog unavailable'));};const timer=setTimeout(fail,14000);window[callback]=data=>{if(settled)return;settled=true;cleanup();resolve(data);};script.onerror=fail;script.src='https://itunes.apple.com/search?'+new URLSearchParams({...params,callback});document.head.append(script);});}
 const filterKey=()=>state.filters.language+'|'+state.filters.mood;
+async function unseenCandidates(signal){
+ const poolSeeds=new Map(seeds().filter(a=>a.origin!=='import').map(a=>[norm(a.name),a]));
+ for(const r of Object.values(state.songRatings).filter(r=>r.value==='replay'))for(const name of r.artist.split(/\s*(?:,|&|;)\s*/)){
+  if(!poolSeeds.has(norm(name)))poolSeeds.set(norm(name),{name,language:'Unspecified',mood:'Any mood'});
+ }
+ const selected=[...poolSeeds.values()].filter(matches).sort((a,b)=>(state.artistVisits['artist:'+norm(a.name)]||0)-(state.artistVisits['artist:'+norm(b.name)]||0)||hash(state.rotation+a.name)-hash(state.rotation+b.name)).slice(0,4);
+ if(!selected.length)throw Error('No catalog sources match these filters. Try a wider selection.');
+ for(const a of selected)state.artistVisits['artist:'+norm(a.name)]=Date.now();state.rotation++;save();
+ const queries=await Promise.allSettled(selected.map(async seed=>{
+  const d=await catalog({term:seed.name,media:'music',entity:'song',attribute:'artistTerm',country:seed.language==='English'?'US':'IN',limit:'40'});
+  if(!Array.isArray(d.results))throw Error('Invalid catalog response');
+  return d.results.filter(t=>{
+   if(typeof t.artistName!=='string'||typeof t.trackName!=='string')return false;
+   const credits=t.artistName.split(/\s*(?:,|&|;| feat\. | featuring )\s*/i).map(norm);
+   return (norm(t.artistName)===norm(seed.name)||credits.includes(norm(seed.name)))&&!getSongRating({artist:t.artistName,title:t.trackName})&&!recentlyShown({artist:t.artistName,title:t.trackName});
+  }).sort((a,b)=>hash(state.rotation+a.trackName)-hash(state.rotation+b.trackName)).slice(0,5).map(t=>({artist:t.artistName,title:t.trackName,language:seed.language,mood:seed.mood,genre:t.primaryGenreName||'',catalog:t}));
+ }));
+ if(signal.aborted)throw Error('AI stopped. No new picks were saved.');
+ const seen=new Set(),candidates=[];
+ for(const result of queries)if(result.status==='fulfilled')for(const t of result.value){const k=trackKey(t);if(!seen.has(k)){seen.add(k);candidates.push(t);}}
+ if(!candidates.length)throw Error(queries.every(r=>r.status==='rejected')?'Catalog unavailable. AI was not started.':'No unseen catalog tracks in this batch. Refresh to search the next artists; the 14-day exclusion stays in place.');
+ return candidates.slice(0,20);
+}
 const profileKey=()=>JSON.stringify([state.filters,state.songRatings,state.imports,state.seeds,state.engine]);
 async function refresh(){
  if(busy)return;
@@ -85,19 +108,21 @@ async function refresh(){
  try {
   if(ai){
    aiController=new AbortController();$('#cancel-ai').hidden=false;
-   $('#ai-status').textContent='Preparing local AI. First load may take several minutes…';
-   const [client,core]=await Promise.all([import('./ai-client.mjs?v=labels-fix-1'),import('./ai-core.mjs?v=labels-fix-1')]);
-   selected=await client.recommend(core.tasteProfile(state),text=>$('#ai-status').textContent=text,aiController.signal);
+   $('#ai-status').textContent='Finding unseen catalog tracks before starting AI…';
+   const candidates=await unseenCandidates(aiController.signal);
+   if(snapshot!==profileKey())throw Error('Your taste or filters changed. Refresh again.');
+   const [client,core]=await Promise.all([import('./ai-client.mjs?v=candidates-1'),import('./ai-core.mjs?v=candidates-1')]);
+   selected=await client.recommend({...core.tasteProfile(state),candidates},text=>$('#ai-status').textContent=text,aiController.signal);
    // Validate all current exclusions again, including feedback outside the prompt sample.
    selected=selected.filter(a=>matches(a)&&!getSongRating(a));
-   $('#ai-status').textContent='AI songs selected. Checking exact titles and artist credits…';
+   $('#ai-status').textContent='AI selected songs from the verified, unseen catalog pool…';
   } else selected=chosen();
   if(snapshot!==profileKey())throw Error('Your taste or filters changed. Refresh again for your latest choices.');
   if(!selected.length)throw Error('No artist suggestions match. Widen filters or add favorite artists.');
   for(const a of selected)state.artistVisits['artist:'+norm(a.name)]=Date.now();save();
   $('#feed-status').textContent='Checking the catalog for '+selected.map(a=>a.name).join(', ')+'…';
   const results=await Promise.allSettled(selected.map(async seed=>{
-   const d=await catalog({term:ai?seed.title+' '+seed.artist:seed.name,media:'music',entity:'song',attribute:ai?'songTerm':'artistTerm',country:seed.language==='English'?'US':'IN',limit:'40'});
+   const d=ai?{results:[seed.catalog]}:await catalog({term:seed.name,media:'music',entity:'song',attribute:ai?'songTerm':'artistTerm',country:seed.language==='English'?'US':'IN',limit:'40'});
    if(!Array.isArray(d.results))throw Error('Invalid catalog response');
    const seen=new Set(),found=d.results.filter(t=>{
     if(typeof t.artistName!=='string'||typeof t.trackName!=='string')return false;
@@ -138,12 +163,12 @@ $('#recommendation-mode').value=state.engine;
 $('#recommendation-mode').addEventListener('change',()=>{
  state.engine=$('#recommendation-mode').value;save();
  $('#ai-status').textContent=state.engine==='ai'?'Refresh picks loads local AI and generates a new batch. Your existing results remain until then.':'Catalog mode uses artist-search rules, without AI.';
- if(state.engine==='catalog')import('./ai-client.mjs?v=labels-fix-1').then(m=>m.stop()).catch(()=>{});
+ if(state.engine==='catalog')import('./ai-client.mjs?v=candidates-1').then(m=>m.stop()).catch(()=>{});
 });
 $('#clear-ai').addEventListener('click',async()=>{
  if(busy)return;busy=true;$('#clear-ai').disabled=true;$('#refresh').disabled=true;$('#recommendation-mode').disabled=true;
  $('#ai-status').textContent='Clearing only AI model downloads. Keeping your song feedback…';
- try{const client=await import('./ai-client.mjs?v=labels-fix-1');await client.clearDownloads();$('#ai-status').textContent='AI downloads cleared. Your song ratings are unchanged. Click Refresh picks to load Lightweight AI.';}
+ try{const client=await import('./ai-client.mjs?v=candidates-1');await client.clearDownloads();$('#ai-status').textContent='AI downloads cleared. Your song ratings are unchanged. Click Refresh picks to load Lightweight AI.';}
  catch(error){$('#ai-status').textContent=error.message;}
  finally{busy=false;$('#clear-ai').disabled=false;$('#refresh').disabled=false;$('#recommendation-mode').disabled=false;}
 });
