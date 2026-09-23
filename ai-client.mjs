@@ -14,7 +14,7 @@ export async function recommend(profile, progress, signal) {
       const timer=setTimeout(()=>finish(Error('AI took too long. Try again on a faster connection or device.')),10*60*1000);
       signal.addEventListener('abort',abort,{once:true});
       try {
-        worker ||= new Worker(new URL('./ai-worker.mjs?v=lightweight-1',import.meta.url),{type:'module'});
+        worker ||= new Worker(new URL('./ai-worker.mjs?v=grammar-fix-1',import.meta.url),{type:'module'});
         worker.onmessage=({data})=>{
           if(data.type==='progress')progress(data.text);
           else if(data.type==='result')finish(null,data.songs);
@@ -36,7 +36,7 @@ export async function clearDownloads(){
    const finish=error=>{clearTimeout(timer);cleanupWorker?.terminate();error?reject(error):resolve();};
    const timer=setTimeout(()=>finish(Error('AI download cleanup timed out. Reload the page and try again.')),60000);
    try{
-    cleanupWorker=new Worker(new URL('./ai-worker.mjs?v=lightweight-1',import.meta.url),{type:'module'});
+    cleanupWorker=new Worker(new URL('./ai-worker.mjs?v=grammar-fix-1',import.meta.url),{type:'module'});
     cleanupWorker.onmessage=({data})=>{if(data.type==='cleared')finish();else if(data.type==='error')finish(Error(data.text));};
     cleanupWorker.onerror=()=>finish(Error('Could not load AI cleanup. Check your connection and retry.'));
     cleanupWorker.postMessage({type:'clear'});

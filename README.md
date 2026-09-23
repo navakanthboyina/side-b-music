@@ -88,3 +88,5 @@ Song-feedback UI regression: install the test-only dependency with `npm install 
 ## AI storage recovery
 
 The previous 3B model could exceed browser cache quotas. Lightweight AI replaces it with a 0.5B model. On first load, the worker removes only cached files whose URLs belong to the previous model and its runtime. The **Clear AI downloads** button removes downloadable files for both dashboard model versions, including partially downloaded shards. It does not clear localStorage, song feedback, imports, history, or unrelated model/application files. Quota failures give recovery instructions rather than suggesting a paid subscription. Free disk space and browser storage policies can still prevent loading; hardware inference remains device-dependent.
+
+AI output formatting is requested in the prompt and validated by `parseSongs`. The worker intentionally does not set WebLLM `response_format`: its JSON grammar matcher failed during initialization on a reported device. Malformed responses still produce an explicit error, and invalid/unverified songs are not displayed. This change does not delete cached model weights or user feedback.
