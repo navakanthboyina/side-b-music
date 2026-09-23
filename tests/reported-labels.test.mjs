@@ -1,0 +1,13 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';
+import {parseSongs,messagesFor} from '../ai-core.mjs';
+const raw='```json\n'+fs.readFileSync(new URL('./fixtures/ambiguous-labels.json',import.meta.url),'utf8')+'\n```';
+const profile={feedback:[],recentSongs:[],language:'All languages',mood:'Any mood'};
+const songs=parseSongs(raw,profile);
+assert.equal(songs.length,2);assert(songs.every(s=>s.language==='Unspecified'&&s.mood==='Any mood'));
+assert.equal(songs[0].title,'Example Song 1');
+assert.throws(()=>parseSongs(raw,{...profile,language:'Telugu'}),/languageFilter: 2/);
+assert.throws(()=>parseSongs(raw,{...profile,mood:'Warm'}),/moodFilter: 2/);
+assert.equal(parseSongs(raw,{...profile,feedback:[songs[0]]}).length,1);
+assert(!messagesFor(profile)[0].content.includes('Telugu|Tamil'));
+assert(!messagesFor(profile)[0].content.includes('Warm|Reflective'));
+console.log('PASS: equivalent ambiguous-label fixture yields two candidates; unknown labels never bypass specific filters or exclusions.');

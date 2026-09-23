@@ -1,5 +1,5 @@
 import { CreateMLCEngine, prebuiltAppConfig } from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/lib/index.js';
-import { MODEL, messagesFor, parseSongs } from './ai-core.mjs?v=diagnostics-1';
+import { MODEL, messagesFor, parseSongs } from './ai-core.mjs?v=labels-fix-1';
 import { LEGACY_MODEL, clearModelDownloads, isQuotaError, QUOTA_MESSAGE } from './ai-storage.mjs';
 let engine;
 const records=ids=>prebuiltAppConfig.model_list.filter(r=>ids.includes(r.model_id));
