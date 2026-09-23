@@ -1,5 +1,5 @@
 // Pure helpers shared by the local AI worker and tests.
-export const MODEL = 'Qwen2.5-3B-Instruct-q4f16_1-MLC';
+export const MODEL = 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
 const norm=s=>String(s).normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export const songKey=t=>'track:'+t.artist.split(/\s*(?:,|&|;)\s*/).map(norm).sort().join('|')+':'+norm(t.title);
 export function tasteProfile(state) {

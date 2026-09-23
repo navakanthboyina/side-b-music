@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {clearModelDownloads,isQuotaError,QUOTA_MESSAGE} from '../ai-storage.mjs';
+const record={model:'https://huggingface.co/mlc-ai/our-model',model_lib:'https://example.test/our-model.wasm'};
+const other='https://huggingface.co/mlc-ai/other-model/resolve/main/weights.bin';
+const prefixTrap='https://huggingface.co/mlc-ai/our-model-extra/resolve/main/weights.bin';
+const urls=new Set([record.model+'/resolve/main/params_shard_0.bin',record.model+'/resolve/main/tokenizer.json',record.model_lib,other,prefixTrap,'https://example.test/user-data']);
+const cache={keys:async()=>[...urls].map(url=>({url})),delete:async r=>urls.delete(r.url)};
+assert.equal(await clearModelDownloads({keys:async()=>['webllm/model'],open:async()=>cache},[record]),3);
+assert.deepEqual([...urls],[other,prefixTrap,'https://example.test/user-data']);
+assert.equal(await clearModelDownloads({keys:async()=>[],open:async()=>cache},[record]),0);
+assert(isQuotaError(new DOMException('Quota exceeded.','QuotaExceededError')));
+assert(!isQuotaError(Error('Network offline')));
+assert.match(QUOTA_MESSAGE,/ratings will stay saved/);
+await assert.rejects(clearModelDownloads(undefined,[record]),/cache access/);
+console.log('PASS: partial model cleanup is URL-scoped; unrelated files preserved; quota errors identified.');

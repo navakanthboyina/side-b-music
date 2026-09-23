@@ -80,13 +80,13 @@ async function refresh(){
  if(busy)return;
  pruneHistory();busy=true;
  const key=filterKey(), snapshot=profileKey(), ai=state.engine==='ai', btn=$('#refresh');
- btn.disabled=true;$('#recommendation-mode').disabled=true;btn.textContent=ai?'Finding AI picks…':'Finding music…';
+ btn.disabled=true;$('#clear-ai').disabled=true;$('#recommendation-mode').disabled=true;btn.textContent=ai?'Finding AI picks…':'Finding music…';
  let selected,failed=0;
  try {
   if(ai){
    aiController=new AbortController();$('#cancel-ai').hidden=false;
    $('#ai-status').textContent='Preparing local AI. First load may take several minutes…';
-   const [client,core]=await Promise.all([import('./ai-client.mjs'),import('./ai-core.mjs')]);
+   const [client,core]=await Promise.all([import('./ai-client.mjs?v=lightweight-1'),import('./ai-core.mjs')]);
    selected=await client.recommend(core.tasteProfile(state),text=>$('#ai-status').textContent=text,aiController.signal);
    // Validate all current exclusions again, including feedback outside the prompt sample.
    selected=selected.filter(a=>matches(a)&&!getSongRating(a));
@@ -129,7 +129,7 @@ async function refresh(){
   if(ai)$('#ai-status').textContent=text;
   $('#feed-status').textContent=text+' Existing results have not been replaced.';
  }finally{
-  aiController=null;busy=false;btn.disabled=false;$('#recommendation-mode').disabled=false;$('#cancel-ai').hidden=true;
+  aiController=null;busy=false;btn.disabled=false;$('#clear-ai').disabled=false;$('#recommendation-mode').disabled=false;$('#cancel-ai').hidden=true;
   btn.innerHTML='Refresh picks <span aria-hidden="true">↻</span>';
  }
 }
@@ -137,7 +137,14 @@ $('#recommendation-mode').value=state.engine;
 $('#recommendation-mode').addEventListener('change',()=>{
  state.engine=$('#recommendation-mode').value;save();
  $('#ai-status').textContent=state.engine==='ai'?'Refresh picks loads local AI and generates a new batch. Your existing results remain until then.':'Catalog mode uses artist-search rules, without AI.';
- if(state.engine==='catalog')import('./ai-client.mjs').then(m=>m.stop()).catch(()=>{});
+ if(state.engine==='catalog')import('./ai-client.mjs?v=lightweight-1').then(m=>m.stop()).catch(()=>{});
+});
+$('#clear-ai').addEventListener('click',async()=>{
+ if(busy)return;busy=true;$('#clear-ai').disabled=true;$('#refresh').disabled=true;$('#recommendation-mode').disabled=true;
+ $('#ai-status').textContent='Clearing only AI model downloads. Keeping your song feedback…';
+ try{const client=await import('./ai-client.mjs?v=lightweight-1');await client.clearDownloads();$('#ai-status').textContent='AI downloads cleared. Your song ratings are unchanged. Click Refresh picks to load Lightweight AI.';}
+ catch(error){$('#ai-status').textContent=error.message;}
+ finally{busy=false;$('#clear-ai').disabled=false;$('#refresh').disabled=false;$('#recommendation-mode').disabled=false;}
 });
 $('#cancel-ai').addEventListener('click',()=>{aiController?.abort();$('#ai-status').textContent='Stopping AI…';});
 

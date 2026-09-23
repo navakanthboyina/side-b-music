@@ -4,11 +4,11 @@ A standalone static dashboard (no build step) designed for a **new GitHub reposi
 
 ## Free AI mode
 
-1. Open Discover and select **AI picks — local model**.
+1. Open Discover and select **AI picks — Lightweight AI**.
 2. Like a few individual songs in Discover or the listening plan. No import is required. Playlist URLs alone do not give the AI your playlist contents.
 3. Press **Refresh picks** to download/load the model and generate recommendations. Use **Stop AI** to cancel.
 
-AI runs on the visitor’s device using Qwen2.5-3B-Instruct (4-bit) and WebLLM 0.2.85. There is no paid API, server bill for inference, API key, or provider account. The initial model weights total about 1.74 GB; allow roughly 2 GB for download/cache and around 3 GB of available GPU memory. WebGPU with shader-f16 is required. Device support and speed vary. Model files are cached by WebLLM when browser storage permits; eviction can require another download. Downloads and local computation still consume data, battery, and device resources.
+AI runs on the visitor’s device using Qwen2.5-0.5B-Instruct (4-bit) and WebLLM 0.2.85. There is no paid API, server bill for inference, API key, or provider account. The initial model weights are roughly 280 MB; allow extra storage for runtime/tokenizer files and around 1 GB of GPU memory. This lightweight model reduces storage use but may have weaker music knowledge than the previous 3B model. WebGPU with shader-f16 is required. Device support and speed vary. Model files are cached by WebLLM when browser storage permits; eviction can require another download. Downloads and local computation still consume data, battery, and device resources.
 
 The LLM proposes up to six specific songs from your song-level feedback, with explanations referencing liked songs and estimated shared qualities. It requests cross-artist discovery, with at most two suggestions per credited artist. Each suggestion must match both the normalized title and artist credits in the iTunes catalog; unmatched suggestions are discarded, never substituted with random tracks by that artist. Similarity explanations are model estimates, not audio analysis. Sparse profiles remain provisional.
 
@@ -20,7 +20,7 @@ AI runs **only after a click**, never as a background job or automatic large dow
 
 Unsupported devices and failed downloads show an error and preserve existing results. Users may explicitly choose **Catalog picks — no AI**; no rule-based results are silently labeled AI. Both modes retain 14-day song exclusions.
 
-Model: https://huggingface.co/mlc-ai/Qwen2.5-3B-Instruct-q4f16_1-MLC
+Model: https://huggingface.co/mlc-ai/Qwen2.5-0.5B-Instruct-q4f16_1-MLC
 
 WebLLM: https://webllm.mlc.ai/docs/user/get_started.html
 
@@ -80,6 +80,11 @@ The previous release did not record exposure history. On upgrade, only its lates
 
 ## Checks
 
-Run `node --test tests/ai.test.mjs` for song-based AI parsing, preference filters, unsupported-device handling, and cancellation tests. These use a mocked worker; they do not validate on-device model quality or GPU performance.
+Run `node --test tests/*.test.mjs` for song-based AI parsing, preference filters, unsupported-device handling, and cancellation tests. These use a mocked worker; they do not validate on-device model quality or GPU performance.
 
 Song-feedback UI regression: install the test-only dependency with `npm install --no-save jsdom`, then run `node tests/song-feedback.cjs`. It checks same-artist song independence, reloads, undo, old-rating migration and exact song matching with mocked AI/catalog responses. No dependency is needed to serve the dashboard.
+
+
+## AI storage recovery
+
+The previous 3B model could exceed browser cache quotas. Lightweight AI replaces it with a 0.5B model. On first load, the worker removes only cached files whose URLs belong to the previous model and its runtime. The **Clear AI downloads** button removes downloadable files for both dashboard model versions, including partially downloaded shards. It does not clear localStorage, song feedback, imports, history, or unrelated model/application files. Quota failures give recovery instructions rather than suggesting a paid subscription. Free disk space and browser storage policies can still prevent loading; hardware inference remains device-dependent.
