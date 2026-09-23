@@ -7,7 +7,7 @@
   <title>Munna’s Grooves — Your listening room</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111412'/%3E%3Cpath d='M9 12v8m7-13v18m7-13v8' stroke='%23c9f76b' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
-  <script defer src="data.js"></script><script defer src="app.js?v=grammar-fix-1"></script>
+  <script defer src="data.js"></script><script defer src="app.js?v=diagnostics-1"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to music</a>
@@ -40,6 +40,7 @@
       <p class="small muted">Your taste is processed locally. Model files come from external hosts; artist searches go to iTunes. AI fit explanations and language/mood labels are estimates, not audio analysis. No playlist import is required: like a few songs to start. <a href="#profile">See your song feedback →</a></p>
       <p id="ai-status" role="status" class="small">Choose Refresh picks to load AI and generate a batch. No model downloads until you click.</p><button id="clear-ai" class="secondary">Clear AI downloads</button><span class="small muted"> Keeps your song ratings.</span> <button id="cancel-ai" class="secondary" hidden>Stop AI</button>
     </section>
+    <details id="ai-diagnostics" class="panel" hidden><summary>AI diagnostic details</summary><p class="small muted">Shows the generated reply and rejection reasons, not your full profile. Nothing is sent automatically. Review before copying or sharing.</p><pre id="ai-diagnostic-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto"></pre></details>
     <div class="filters"><label>Language <select id="language"><option>All languages</option><option>Telugu</option><option>Tamil</option><option>Hindi</option><option>English</option></select></label><label>Mood <select id="mood"><option>Any mood</option><option>Reflective</option><option>Warm</option><option>Energetic</option></select></label><span class="filter-note small">Filters describe the seed artists, not every track.</span></div>
     <div class="feature-panel"><div><span class="pill">YOUR FIRST LISTEN</span><h2 id="featured-name">Vivek Sagar</h2><p id="featured-note">Start with playful Telugu melodies and a relaxed pace.</p><div id="featured-link"></div></div><div class="feature-aside"><span class="eyebrow">THIS WEEK’S RITUAL</span><strong>3 artists.<br>20 minutes each.</strong><a href="#plan">Open your listening plan →</a></div></div>
     <div class="section-heading"><div><h2>Fresh picks</h2><p class="muted small" id="feed-status" role="status">Starter selections · press Refresh picks for live catalog results.</p></div><span id="feed-badge" class="outline-pill">CURATED START</span></div>

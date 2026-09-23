@@ -17,20 +17,31 @@ export function messagesFor(profile) {
     {role:'user',content:JSON.stringify(profile)}
   ];
 }
-export function parseSongs(text,profile) {
+function parseSongsInternal(text,profile) {
   if(typeof text!=='string'||text.length>20000)throw Error('AI returned an invalid response. Please try again.');
   let data;try{data=JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{throw Error('AI could not format its songs. Please try again.');}
   if(!Array.isArray(data.songs))throw Error('AI did not return song picks. Please try again.');
+  const rejected={invalidFields:0,invalidLabels:0,alreadyRatedOrRecent:0,duplicateOrArtistLimit:0,languageFilter:0,moodFilter:0};
   const excluded=new Set([...profile.feedback,...profile.recentSongs].map(songKey)),seen=new Set(),artistCounts=new Map(),out=[];
   for(const t of data.songs.slice(0,15)){
-    if(!t||!['artist','title','reason'].every(k=>typeof t[k]==='string'&&t[k].trim()&&t[k].length<=(k==='reason'?400:300)))continue;
-    if(!['Telugu','Tamil','Hindi','English','Unspecified'].includes(t.language)||!['Warm','Reflective','Energetic','Any mood'].includes(t.mood))continue;
-    const k=songKey(t),a=norm(t.artist);if(!a||!norm(t.title)||excluded.has(k)||seen.has(k)||(artistCounts.get(a)||0)>=2)continue;
-    if(profile.language!=='All languages'&&t.language!==profile.language)continue;
-    if(profile.mood!=='Any mood'&&t.mood!==profile.mood)continue;
+    if(!t||!['artist','title','reason'].every(k=>typeof t[k]==='string'&&t[k].trim()&&t[k].length<=(k==='reason'?400:300))){rejected.invalidFields++;continue;}
+    if(!['Telugu','Tamil','Hindi','English','Unspecified'].includes(t.language)||!['Warm','Reflective','Energetic','Any mood'].includes(t.mood)){rejected.invalidLabels++;continue;}
+    const k=songKey(t),a=norm(t.artist);if(!a||!norm(t.title)){rejected.invalidFields++;continue;}
+    if(excluded.has(k)){rejected.alreadyRatedOrRecent++;continue;}
+    if(seen.has(k)||(artistCounts.get(a)||0)>=2){rejected.duplicateOrArtistLimit++;continue;}
+    if(profile.language!=='All languages'&&t.language!==profile.language){rejected.languageFilter++;continue;}
+    if(profile.mood!=='Any mood'&&t.mood!==profile.mood){rejected.moodFilter++;continue;}
     seen.add(k);artistCounts.set(a,(artistCounts.get(a)||0)+1);
     out.push({name:t.artist.trim(),artist:t.artist.trim(),title:t.title.trim(),language:t.language,mood:t.mood,reason:t.reason.trim(),origin:'ai'});
   }
-  if(!out.length)throw Error('No new AI songs matched. Widen your filters or try again.');
+  if(!out.length){const details=Object.entries(rejected).filter(([,n])=>n).map(([k,n])=>k+': '+n).join(', ');const error=Error('AI returned no usable songs ('+(details||'empty song list')+'). Open AI diagnostic details below.');error.rejected=rejected;throw error;}
   return out.slice(0,6);
+}
+
+export function parseSongs(text,profile){
+ try{return parseSongsInternal(text,profile);}
+ catch(error){
+  error.diagnostics={version:'diagnostics-1',model:MODEL,language:profile.language,mood:profile.mood,rejected:error.rejected||null,response:typeof text==='string'?text.slice(0,12000):String(text)};
+  throw error;
+ }
 }
