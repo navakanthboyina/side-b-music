@@ -58,12 +58,12 @@ function knownSongs(state) {
   return [...starter.map(a=>({artist:a.name,title:a.track})), ...(state.batch?.items || []), ...Object.values(state.songRatings)];
 }
 // Only public track metadata is requested; listening links stay on the dashboard's platforms.
-async function catalogTracks(name, fetchCatalog) {
+async function catalogTracks(name, fetchCatalog, accept, stats) {
   const apple = new URL('https://itunes.apple.com/search');
   apple.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'100'});
   const deezer = new URL('https://api.deezer.com/search');
   deezer.search = new URLSearchParams({q:'artist:"'+name.replace(/["\\]/g,' ')+'"',limit:'100'});
-  const failures = [];
+  const failures = []; let succeeded = false;
   for (const [provider,url] of [['Apple',apple],['Deezer',deezer]]) {
     try {
       const response = await fetchCatalog(url,{signal:AbortSignal.timeout(8000)});
@@ -72,11 +72,15 @@ async function catalogTracks(name, fetchCatalog) {
       try { data = await response.json(); } catch { failures.push(provider+' invalid JSON'); continue; }
       const rows = provider==='Apple' ? data.results : data.data;
       if (!Array.isArray(rows)) { failures.push(provider+' invalid response'); continue; }
-      return provider==='Apple' ? rows : rows.map(t=>({artistName:t.artist?.name,trackName:t.title}));
+      succeeded = true; stats.searches++; stats.rows += rows.length;
+      const tracks = provider==='Apple' ? rows : rows.map(t=>({artistName:t.artist?.name,trackName:t.title}));
+      const eligible = tracks.filter(accept);
+      if (eligible.length) return eligible;
     } catch(error) {
       failures.push(provider+' '+(['TimeoutError','AbortError'].includes(error.name)?'timeout':'request failed'));
     }
   }
+  if (succeeded) return [];
   throw new Error(failures.join('; '));
 }
 export async function collectCandidates(state, fetchCatalog = fetch) {
@@ -88,18 +92,21 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   const all = [...seeds.values()];
   const selected = Array.from({length:Math.min(18,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
   const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
+  const stats = {searches:0,rows:0,invalid:0,artistMismatch:0,excluded:0,duplicate:0};
   const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0; const failureReasons = new Set();
   // Try more artists when the first searches contain only familiar songs.
   for (let offset=0;offset<selected.length && candidates.length<24;offset+=6) {
   const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async name => {
-    const tracks = await catalogTracks(name,fetchCatalog);
     const unique = new Set();
-    return tracks.filter(t=> {
-      if (!validText(t.artistName) || !validText(t.trackName)) return false;
-      if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) return false;
+    const tracks = await catalogTracks(name,fetchCatalog,t=> {
+      if (!validText(t.artistName) || !validText(t.trackName)) { stats.invalid++; return false; }
+      if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) { stats.artistMismatch++; return false; }
       const key = songKey({artist:t.artistName,title:t.trackName});
-      if (excluded.has(key) || unique.has(key)) return false; unique.add(key); return true;
-    }).slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',language:'Unspecified',mood:'Any mood'}));
+      if (excluded.has(key)) { stats.excluded++; return false; }
+      if (unique.has(key)) { stats.duplicate++; return false; }
+      unique.add(key); return true;
+    },stats);
+    return tracks.slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',language:'Unspecified',mood:'Any mood'}));
   }));
   for (const result of results) {
     if (result.status !== 'fulfilled') { failedSearches++; failureReasons.add(result.reason.message); continue; }
@@ -110,6 +117,7 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   if (!candidates.length && failedSearches) throw fail(503, successfulSearches
     ? 'Some music catalog searches failed; the remaining searches found no fresh songs. Existing picks remain. Try again later.'
     : 'The music catalog could not be reached. AI selection has not started. Existing picks remain. '+[...failureReasons].slice(0,2).join(' | '));
+  if (!candidates.length) throw fail(422, 'No unseen catalog songs. Search diagnostics: '+JSON.stringify(stats)+'. Existing picks remain.');
   return candidates.slice(0,24);
 }
 async function refresh(env) {

@@ -120,3 +120,34 @@ test('Both catalog failures expose safe provider status and preserve the batch',
  assert.match(message,/Apple HTTP 403/);assert.match(message,/Deezer HTTP 429/);assert(!message.includes('Private'));
  assert.deepEqual((await s.state()).batch,before);s.sqlite.close();
 });
+
+test('Successful empty Apple response still tries Deezer',async()=>{
+ const s=setup();let fallback=0;
+ s.env.CATALOG_FETCH=async input=>{
+  const url=new URL(input);
+  if(url.hostname==='itunes.apple.com')return Response.json({results:[]});
+  fallback++;const artist=url.searchParams.get('q').slice(8,-1);
+  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:artist},title:'New Empty Fallback '+i}))});
+ };
+ const response=await s.call('/refresh',{});
+ assert.equal(response.status,200);assert(fallback>0);assert.equal(s.calls().aiCalls,1);s.sqlite.close();
+});
+test('Fully excluded Apple results still try Deezer, keeping familiar songs excluded',async()=>{
+ const s=setup();
+ const seeds=starter.map(a=>({artist:a.name,title:'Familiar Fixture'}));
+ await s.call('/admin/seed',{songs:seeds},{authorization:'Bearer test-owner-secret'});
+ s.env.CATALOG_FETCH=async input=>{
+  const url=new URL(input);
+  if(url.hostname==='itunes.apple.com')return Response.json({results:[{artistName:url.searchParams.get('term'),trackName:'Familiar Fixture'}]});
+  const artist=url.searchParams.get('q').slice(8,-1);
+  return Response.json({data:[{artist:{name:artist},title:'Familiar Fixture'},...Array.from({length:4},(_,i)=>({artist:{name:artist},title:'Fresh Exclusion Fallback '+i}))]});
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ assert((await response.json()).batch.items.every(t=>t.title!=='Familiar Fixture'));s.sqlite.close();
+});
+test('Empty results include aggregate counts without playlist content',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async input=>Response.json(new URL(input).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);
+ const error=(await response.json()).error;assert.match(error,/"rows":0/);assert.match(error,/"artistMismatch":0/);
+ assert(!error.includes(starter[0].name));s.sqlite.close();
+});

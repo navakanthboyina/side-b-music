@@ -58,7 +58,7 @@ Old browser-only data is left on its original device and is not automatically pu
 - Only the owner secret can change playlist starting data. Feedback is restricted to known shared/starter songs. No public API accepts arbitrary batches or full-profile replacements.
 - Database exports are available through `npx wrangler d1 export DB --remote --output /private/path/room-backup.sql`. Keep exports private.
 
-Catalog search tries Apple first and Deezer metadata if the Apple request fails. Up to 18 artist searches, with at most two provider requests each, are made per refresh. Each request has an 8-second timeout. Provider failures show only safe status summaries, never response bodies or secrets. Fallback behavior is tested with simulated responses; reachability from the deployed Worker must be checked live. Listening links remain on the dashboard’s supported platforms.
+Catalog search tries Apple first and Deezer metadata if the Apple request fails, returns no tracks, or has no eligible tracks after filtering. Empty searches report aggregate counts for returned rows, invalid fields, artist mismatches, exclusions, and duplicates; no playlist names or rows are included. Up to 18 artist searches, with at most two provider requests each, are made per refresh. Each request has an 8-second timeout. Provider failures show only safe status summaries, never response bodies or secrets. Fallback behavior is tested with simulated responses; reachability from the deployed Worker must be checked live. Listening links remain on the dashboard’s supported platforms.
 
 ## Validation
 
