@@ -92,15 +92,16 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   const all = [...seeds.values()];
   const selected = Array.from({length:Math.min(18,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
   const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
-  const stats = {searches:0,rows:0,invalid:0,artistMismatch:0,excluded:0,duplicate:0};
+  const stats = {searches:0,rows:0,invalid:0,differentArtistCredits:0,excluded:0,duplicate:0};
   const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0; const failureReasons = new Set();
   // Try more artists when the first searches contain only familiar songs.
   for (let offset=0;offset<selected.length && candidates.length<24;offset+=6) {
   const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async name => {
     const unique = new Set();
+    // Catalog search establishes candidate relevance. Exact artist credits are not an eligibility rule.
     const tracks = await catalogTracks(name,fetchCatalog,t=> {
       if (!validText(t.artistName) || !validText(t.trackName)) { stats.invalid++; return false; }
-      if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) { stats.artistMismatch++; return false; }
+      if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) { stats.differentArtistCredits++; }
       const key = songKey({artist:t.artistName,title:t.trackName});
       if (excluded.has(key)) { stats.excluded++; return false; }
       if (unique.has(key)) { stats.duplicate++; return false; }

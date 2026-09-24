@@ -148,6 +148,30 @@ test('Fully excluded Apple results still try Deezer, keeping familiar songs excl
 test('Empty results include aggregate counts without playlist content',async()=>{
  const s=setup();s.env.CATALOG_FETCH=async input=>Response.json(new URL(input).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
- const error=(await response.json()).error;assert.match(error,/"rows":0/);assert.match(error,/"artistMismatch":0/);
+ const error=(await response.json()).error;assert.match(error,/"rows":0/);assert.match(error,/"differentArtistCredits":0/);
  assert(!error.includes(starter[0].name));s.sqlite.close();
+});
+
+test('Different catalog artist credits reach AI instead of all being rejected',async()=>{
+ const s=setup();let search=0;
+ s.env.CATALOG_FETCH=async()=>{
+  search++;
+  return Response.json({results:Array.from({length:4},(_,i)=>({artistName:'Guest Fixture '+search+' Featuring Ensemble',trackName:'Discovery '+i}))});
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const state=await response.json();assert.equal(state.batch.items.length,12);
+ assert(state.batch.items.every(t=>t.artist.startsWith('Guest Fixture')));
+ assert.equal(s.calls().aiCalls,1);s.sqlite.close();
+});
+test('Accepting different artist credits does not bypass familiar or rated exclusions',async()=>{
+ const s=setup();
+ const known={artist:'Different Catalog Credit',title:'Familiar Fixture'};
+ await s.call('/admin/seed',{songs:[known]},{authorization:'Bearer test-owner-secret'});
+ await s.call('/feedback',{...fixture,rating:'skip'});
+ s.env.CATALOG_FETCH=async()=>Response.json({results:[
+  {artistName:known.artist,trackName:known.title},
+  {artistName:fixture.artist,trackName:fixture.title}
+ ]});
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);
+ assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
 });
