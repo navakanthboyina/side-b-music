@@ -121,6 +121,12 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   if (!candidates.length) throw fail(422, 'No unseen catalog songs. Search diagnostics: '+JSON.stringify(stats)+'. Existing picks remain.');
   return candidates.slice(0,24);
 }
+export function aiReplyText(result) {
+  const value = result?.response ?? result?.choices?.[0]?.message?.content;
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return '';
+}
 export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
   const reply = response?.response;
   return {
@@ -151,11 +157,12 @@ async function refresh(env) {
         env.AI.run(MODEL,{messages,max_tokens:300,temperature:0.5}),
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
       ]).finally(()=>clearTimeout(timer));
-      try { picks=parseCandidatePicks(response.response,profile); break; }
+      const replyText = aiReplyText(response);
+      try { picks=parseCandidatePicks(replyText,profile); break; }
       catch (error) {
         console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));
         if (attempt===1) throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
-        messages.push({role:'assistant',content:String(response.response||'').slice(0,1500)},{role:'user',content:'Return only {"ids":[...]} using numbers from candidates. Select up to 12 distinct IDs.'}); }
+        messages.push({role:'assistant',content:replyText.slice(0,1500)},{role:'user',content:'Return only {"ids":[...]} using numbers from candidates. Select up to 12 distinct IDs.'}); }
     }
     const at=Date.now();
     state.batch={at,items:picks.map(t=>({artist:t.artist,title:t.title,reason:profile.provisional?'AI selection from the shared discovery pool.':'AI selection using the community’s individual song feedback.',aiSong:true})),model:MODEL};

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
-import worker, {aiFailureDiagnostic} from '../backend/worker.mjs';
+import worker, {aiFailureDiagnostic, aiReplyText} from '../backend/worker.mjs';
 import starter from '../backend/starter.mjs';
 
 // Execute real SQLite SQL through the subset of the D1 binding used by the Worker.
@@ -185,4 +185,26 @@ test('AI diagnostics identify response shape and rejections without including th
  assert(!JSON.stringify(diagnostic).includes('not for logging'));
  assert.equal(aiFailureDiagnostic({response:'x'.repeat(5000)},{},1,0).reply.length,4000);
  assert.equal(aiFailureDiagnostic({result:{}},{},1,0).responseType,'undefined');
+});
+
+test('Structured Cloudflare output saves a shared batch without corrective retry',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async()=>{calls++;return {response:{ids:[3,6,9]},choices:[],model:'fixture'};};
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const result=await response.json();assert.equal(result.batch.items.length,3);
+ assert.deepEqual((await s.state()).batch,result.batch);assert.equal(calls,1);s.sqlite.close();
+});
+test('Response normalization supports text and chat envelopes without relaxing ID validation',async()=>{
+ assert.equal(aiReplyText({response:{ids:[4,8]}}),'{"ids":[4,8]}');
+ assert.equal(aiReplyText({response:'{"ids":[4]}'}),'{"ids":[4]}');
+ assert.equal(aiReplyText({choices:[{message:{content:'{"ids":[8]}'}}]}),'{"ids":[8]}');
+ assert.equal(aiReplyText({prompt_text:'must not parse input'}),'');
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>{
+  calls++;
+  if(calls===2)assert.equal(input.messages.at(-2).content,'{"ids":[999]}');
+  return {response:{ids:[999]}};
+ };
+ assert.equal((await s.call('/refresh',{})).status,422);
+ assert.equal(calls,2);assert.equal((await s.state()).batch,null);s.sqlite.close();
 });
