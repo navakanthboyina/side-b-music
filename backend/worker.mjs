@@ -63,14 +63,20 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   for (const name of [...state.seedArtists, ...starter.map(a=>a.name), ...Object.values(state.songRatings).filter(r=>r.value==='replay').flatMap(r=>r.artist.split(/\s*(?:,|&|;)\s*/))]) {
     if (validText(name)) seeds.set(norm(name), name);
   }
-  const all = [...seeds.values()]; const selected = Array.from({length:Math.min(6,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
+  const all = [...seeds.values()];
+  const selected = Array.from({length:Math.min(18,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
   const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
-  const results = await Promise.allSettled(selected.map(async name => {
+  const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0;
+  // Try more artists when the first searches contain only familiar songs.
+  for (let offset=0;offset<selected.length && candidates.length<24;offset+=6) {
+  const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async name => {
     const url = new URL('https://itunes.apple.com/search');
-    url.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'40'});
+    url.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'100'});
     const response = await fetchCatalog(url, {signal:AbortSignal.timeout(15000)});
     if (!response.ok) throw Error('Catalog unavailable');
-    const data = await response.json(); const unique = new Set();
+    const data = await response.json();
+    if (!Array.isArray(data.results)) throw Error('Invalid catalog response');
+    const unique = new Set();
     return (data.results || []).filter(t=> {
       if (!validText(t.artistName) || !validText(t.trackName)) return false;
       if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) return false;
@@ -78,8 +84,16 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
       if (excluded.has(key) || unique.has(key)) return false; unique.add(key); return true;
     }).slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',language:'Unspecified',mood:'Any mood'}));
   }));
-  const seen = new Set();
-  return results.flatMap(r=>r.status==='fulfilled'?r.value:[]).filter(t=>{const k=songKey(t);if(seen.has(k))return false;seen.add(k);return true;}).slice(0,24);
+  for (const result of results) {
+    if (result.status !== 'fulfilled') { failedSearches++; continue; }
+    successfulSearches++;
+    for (const song of result.value) { const key=songKey(song); if (!seen.has(key)) { seen.add(key); candidates.push(song); } }
+  }
+  }
+  if (!candidates.length && failedSearches) throw fail(503, successfulSearches
+    ? 'Some music catalog searches failed; the remaining searches found no fresh songs. Existing picks remain. Try again later.'
+    : 'The music catalog could not be reached. AI selection has not started. Existing picks remain. Try again later.');
+  return candidates.slice(0,24);
 }
 async function refresh(env) {
   const now = Date.now(), lease = crypto.randomUUID();

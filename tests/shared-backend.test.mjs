@@ -73,3 +73,27 @@ test('Feedback limits, daily generation cap and expired lease recovery',async()=
  assert.equal((await s.call('/refresh',{})).status,429);assert.equal((await s.state()).refreshing,false);assert.equal(s.calls().aiCalls,1);
  s.sqlite.close();
 });
+
+test('Catalog search widens past exhausted artists',async()=>{
+ const s=setup();let calls=0;
+ s.env.CATALOG_FETCH=async url=>{
+  calls++;assert.equal(new URL(url).searchParams.get('limit'),'100');
+  const artist=new URL(url).searchParams.get('term');
+  return Response.json({results:calls<=6?[]:Array.from({length:4},(_,i)=>({artistName:artist,trackName:'Fresh Fixture '+i}))});
+ };
+ const response=await s.call('/refresh',{});
+ assert.equal(response.status,200);assert(calls>6);assert.equal(s.calls().aiCalls,1);
+ s.sqlite.close();
+});
+test('Catalog outage is not reported as exhausted songs and never calls AI',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async()=>new Response('Unavailable',{status:503});
+ const response=await s.call('/refresh',{});
+ assert.equal(response.status,503);assert.match((await response.json()).error,/catalog could not be reached/);
+ assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).refreshing,false);
+ s.sqlite.close();
+});
+test('Successful empty catalog remains distinct from an outage',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async()=>Response.json({results:[]});
+ assert.equal((await s.call('/refresh',{})).status,422);
+ assert.equal(s.calls().aiCalls,0);s.sqlite.close();
+});
