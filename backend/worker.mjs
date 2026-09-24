@@ -57,6 +57,28 @@ async function ipLimit(request, db) {
 function knownSongs(state) {
   return [...starter.map(a=>({artist:a.name,title:a.track})), ...(state.batch?.items || []), ...Object.values(state.songRatings)];
 }
+// Only public track metadata is requested; listening links stay on the dashboard's platforms.
+async function catalogTracks(name, fetchCatalog) {
+  const apple = new URL('https://itunes.apple.com/search');
+  apple.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'100'});
+  const deezer = new URL('https://api.deezer.com/search');
+  deezer.search = new URLSearchParams({q:'artist:"'+name.replace(/["\\]/g,' ')+'"',limit:'100'});
+  const failures = [];
+  for (const [provider,url] of [['Apple',apple],['Deezer',deezer]]) {
+    try {
+      const response = await fetchCatalog(url,{signal:AbortSignal.timeout(8000)});
+      if (!response.ok) { failures.push(provider+' HTTP '+response.status); continue; }
+      let data;
+      try { data = await response.json(); } catch { failures.push(provider+' invalid JSON'); continue; }
+      const rows = provider==='Apple' ? data.results : data.data;
+      if (!Array.isArray(rows)) { failures.push(provider+' invalid response'); continue; }
+      return provider==='Apple' ? rows : rows.map(t=>({artistName:t.artist?.name,trackName:t.title}));
+    } catch(error) {
+      failures.push(provider+' '+(['TimeoutError','AbortError'].includes(error.name)?'timeout':'request failed'));
+    }
+  }
+  throw new Error(failures.join('; '));
+}
 export async function collectCandidates(state, fetchCatalog = fetch) {
   const seeds = new Map();
   // Imported playlist rows stay out of the AI prompt. Only live catalog candidates and explicit shared feedback reach AI.
@@ -66,18 +88,13 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   const all = [...seeds.values()];
   const selected = Array.from({length:Math.min(18,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
   const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
-  const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0;
+  const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0; const failureReasons = new Set();
   // Try more artists when the first searches contain only familiar songs.
   for (let offset=0;offset<selected.length && candidates.length<24;offset+=6) {
   const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async name => {
-    const url = new URL('https://itunes.apple.com/search');
-    url.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'100'});
-    const response = await fetchCatalog(url, {signal:AbortSignal.timeout(15000)});
-    if (!response.ok) throw Error('Catalog unavailable');
-    const data = await response.json();
-    if (!Array.isArray(data.results)) throw Error('Invalid catalog response');
+    const tracks = await catalogTracks(name,fetchCatalog);
     const unique = new Set();
-    return (data.results || []).filter(t=> {
+    return tracks.filter(t=> {
       if (!validText(t.artistName) || !validText(t.trackName)) return false;
       if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) return false;
       const key = songKey({artist:t.artistName,title:t.trackName});
@@ -85,14 +102,14 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
     }).slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',language:'Unspecified',mood:'Any mood'}));
   }));
   for (const result of results) {
-    if (result.status !== 'fulfilled') { failedSearches++; continue; }
+    if (result.status !== 'fulfilled') { failedSearches++; failureReasons.add(result.reason.message); continue; }
     successfulSearches++;
     for (const song of result.value) { const key=songKey(song); if (!seen.has(key)) { seen.add(key); candidates.push(song); } }
   }
   }
   if (!candidates.length && failedSearches) throw fail(503, successfulSearches
     ? 'Some music catalog searches failed; the remaining searches found no fresh songs. Existing picks remain. Try again later.'
-    : 'The music catalog could not be reached. AI selection has not started. Existing picks remain. Try again later.');
+    : 'The music catalog could not be reached. AI selection has not started. Existing picks remain. '+[...failureReasons].slice(0,2).join(' | '));
   return candidates.slice(0,24);
 }
 async function refresh(env) {

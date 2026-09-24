@@ -97,3 +97,26 @@ test('Successful empty catalog remains distinct from an outage',async()=>{
  assert.equal((await s.call('/refresh',{})).status,422);
  assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
+
+test('Apple outage falls back to Deezer metadata and completes AI selection',async()=>{
+ const s=setup();let fallbackCalls=0;
+ s.env.CATALOG_FETCH=async url=>{
+  url=new URL(url);
+  if(url.hostname==='itunes.apple.com')return new Response('Unavailable',{status:403});
+  assert.equal(url.hostname,'api.deezer.com');fallbackCalls++;
+  const artist=url.searchParams.get('q').slice(8,-1);
+  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:artist},title:'Fallback Fixture '+i}))});
+ };
+ const response=await s.call('/refresh',{});
+ assert.equal(response.status,200);assert(fallbackCalls>0);
+ assert.equal((await response.json()).batch.items.length,12);assert.equal(s.calls().aiCalls,1);
+ s.sqlite.close();
+});
+test('Both catalog failures expose safe provider status and preserve the batch',async()=>{
+ const s=setup();await s.call('/refresh',{});const before=(await s.state()).batch;s.cooldown();
+ s.env.CATALOG_FETCH=async url=>new Response('Private response body',{status:new URL(url).hostname==='itunes.apple.com'?403:429});
+ const response=await s.call('/refresh',{});assert.equal(response.status,503);
+ const message=(await response.json()).error;
+ assert.match(message,/Apple HTTP 403/);assert.match(message,/Deezer HTTP 429/);assert(!message.includes('Private'));
+ assert.deepEqual((await s.state()).batch,before);s.sqlite.close();
+});

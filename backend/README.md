@@ -2,7 +2,7 @@
 
 This backend makes recommendations and song feedback the same for everyone, with no visitor accounts. GitHub Pages continues to serve the dashboard. Cloudflare Workers runs AI and the API; D1 stores the shared state. A Cloudflare owner account is required once for deployment. Keep it on the Workers **Free** plan if you want hard free-tier limits rather than paid overages.
 
-**Status:** code and local integration tests are ready. Shared mode is disabled until a real Worker URL is set in `shared-config.js`. This repository does not contain Cloudflare credentials or the owner's playlist CSVs.
+**Status:** the dashboard is configured for the deployed shared Worker. A successful live AI generation still needs verification. This repository does not contain Cloudflare credentials or the owner's playlist CSVs.
 
 ## Owner setup
 
@@ -37,7 +37,7 @@ Set `MUNNA_ADMIN_TOKEN` in your local environment to the same owner secret (pref
 node seed-playlists.mjs https://YOUR-WORKER.workers.dev /path/listen_with_me.csv /path/timeless_grooves.csv /path/my_shazam_tracks.csv
 ```
 
-This replaces only the shared starting-song set. It preserves community feedback and the current batch. Artist credits supply rotating catalog search sources; playlist songs are excluded as already familiar. Raw playlist rows are not sent to AI or returned by the public state API. AI receives independently fetched iTunes candidates and explicit community song feedback. This is metadata-based discovery, not audio analysis or Spotify synchronization.
+This replaces only the shared starting-song set. It preserves community feedback and the current batch. Artist credits supply rotating catalog search sources; playlist songs are excluded as already familiar. Raw playlist rows are not sent to AI or returned by the public state API. AI receives independently fetched catalog candidates and explicit community song feedback. This is metadata-based discovery, not audio analysis or Spotify synchronization.
 
 ## Activate the dashboard
 
@@ -57,6 +57,8 @@ Old browser-only data is left on its original device and is not automatically pu
 - Origin checks reduce cross-site browser misuse; they are not authentication and cannot stop scripted clients. Anonymous shared ratings can be changed by any visitor. Use Cloudflare's owner controls to disable access if needed.
 - Only the owner secret can change playlist starting data. Feedback is restricted to known shared/starter songs. No public API accepts arbitrary batches or full-profile replacements.
 - Database exports are available through `npx wrangler d1 export DB --remote --output /private/path/room-backup.sql`. Keep exports private.
+
+Catalog search tries Apple first and Deezer metadata if the Apple request fails. Up to 18 artist searches, with at most two provider requests each, are made per refresh. Each request has an 8-second timeout. Provider failures show only safe status summaries, never response bodies or secrets. Fallback behavior is tested with simulated responses; reachability from the deployed Worker must be checked live. Listening links remain on the dashboard’s supported platforms.
 
 ## Validation
 
