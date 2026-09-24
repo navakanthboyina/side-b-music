@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
-import worker from '../backend/worker.mjs';
+import worker, {aiFailureDiagnostic} from '../backend/worker.mjs';
 import starter from '../backend/starter.mjs';
 
 // Execute real SQLite SQL through the subset of the D1 binding used by the Worker.
@@ -174,4 +174,15 @@ test('Accepting different artist credits does not bypass familiar or rated exclu
  ]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
+});
+
+test('AI diagnostics identify response shape and rejections without including the input profile',()=>{
+ const diagnostic=aiFailureDiagnostic({response:'{"ids":[999]}',usage:{total_tokens:10},privateInput:'not for logging'},
+   {diagnostics:{rejected:{invalidSelection:1},profile:'not for logging'}},20,1);
+ assert.equal(diagnostic.model,'@cf/meta/llama-3.2-3b-instruct');
+ assert.equal(diagnostic.attempt,2);assert.equal(diagnostic.candidateCount,20);
+ assert.equal(diagnostic.reply,'{"ids":[999]}');assert.equal(diagnostic.rejected.invalidSelection,1);
+ assert(!JSON.stringify(diagnostic).includes('not for logging'));
+ assert.equal(aiFailureDiagnostic({response:'x'.repeat(5000)},{},1,0).reply.length,4000);
+ assert.equal(aiFailureDiagnostic({result:{}},{},1,0).responseType,'undefined');
 });

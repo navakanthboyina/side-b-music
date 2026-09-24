@@ -121,6 +121,16 @@ export async function collectCandidates(state, fetchCatalog = fetch) {
   if (!candidates.length) throw fail(422, 'No unseen catalog songs. Search diagnostics: '+JSON.stringify(stats)+'. Existing picks remain.');
   return candidates.slice(0,24);
 }
+export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
+  const reply = response?.response;
+  return {
+    event: 'munna-ai-validation', version: 1, model: MODEL, attempt: attempt + 1,
+    candidateCount, responseType: typeof reply,
+    responseKeys: response && typeof response === 'object' ? Object.keys(response).slice(0,10) : [],
+    rejected: error.diagnostics?.rejected || null,
+    reply: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').slice(0,4000)
+  };
+}
 async function refresh(env) {
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
@@ -142,7 +152,9 @@ async function refresh(env) {
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
       ]).finally(()=>clearTimeout(timer));
       try { picks=parseCandidatePicks(response.response,profile); break; }
-      catch { if (attempt===1) throw fail(422,'AI did not select eligible songs. Existing picks remain.');
+      catch (error) {
+        console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));
+        if (attempt===1) throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
         messages.push({role:'assistant',content:String(response.response||'').slice(0,1500)},{role:'user',content:'Return only {"ids":[...]} using numbers from candidates. Select up to 12 distinct IDs.'}); }
     }
     const at=Date.now();
