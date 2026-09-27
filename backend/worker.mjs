@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'inference-errors-12-1';
+export const RECOMMENDER_BUILD = 'ai-probe-12-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -173,8 +173,10 @@ export function budgetedCatalogFetch(fetcher,stats,deadline) {
 }
 export function inferenceFailure(error) {
   // Classify locally; never return provider messages, which may echo prompt data.
-  const message=String(error?.message||''), code=String(error?.code||'');
-  const numericCode=/^\d{3,6}$/.test(code)?Number(code):Number(message.match(/(?:error|code)\s*[:=]?\s*(\d{3,6})\b/i)?.[1])||null;
+  const message=typeof error==='string'?error:String(error?.message||error?.cause?.message||''), code=String(error?.code||error?.cause?.code||'');
+  const numericCode=/^\d{3,6}$/.test(code)?Number(code):Number(message.match(/(?:^|error[ :]*|code[ :=]*)(\d{3,6})\b/i)?.[1])||null;
+  const known={5007:['model_unavailable','The selected AI model was not found.'],3042:['model_unavailable','The model ID is invalid.'],5035:['access','This AI model requires a paid Workers plan.'],5018:['access','This account cannot access the AI model.'],3041:['access','This account cannot access the AI model.'],5016:['access','The model terms must be accepted.'],3023:['access','AI is unavailable for this account.'],3036:['quota','Cloudflare AI allowance is exhausted.'],3040:['rate_limit','Cloudflare AI is temporarily out of capacity.'],3007:['timeout','Cloudflare AI timed out.'],3006:['request_invalid','The AI request is too large.']};
+  if(known[numericCode])return {category:known[numericCode][0],detail:known[numericCode][1],code:numericCode};
   let category='provider_error',detail='Cloudflare AI could not complete the request.';
   if(/quota|neurons|daily.*limit|allowance/i.test(message)){category='quota';detail='Cloudflare AI allowance is exhausted.';}
   else if(/rate.?limit|too many requests|\b429\b/i.test(message)){category='rate_limit';detail='Cloudflare AI is rate limiting requests.';}
@@ -234,9 +236,9 @@ async function refresh(env) {
           stats.error='inference failed';stats.inference=inferenceFailure(error);
           console.warn(JSON.stringify({event:'munna-inference-error',model:MODEL,...stats.inference}));
           if(['quota','rate_limit','access','model_unavailable'].includes(stats.inference.category))throw Object.assign(fail(503,stats.inference.detail+' Previous picks remain saved.'),{selectionStats});
-          // Retry without grammar constraints only when the provider explicitly rejects them.
+          // Use a bounded unstructured retry for format or unclassified provider failures.
           // IDs, scores, references and artist limits still pass the same validator.
-          if(stats.inference.category==='response_format')structured=false;
+          if(['response_format','provider_error'].includes(stats.inference.category))structured=false;
           continue;
         }
         const replyText=aiReplyText(response);
@@ -300,6 +302,27 @@ export default {
       if(origin && origin!==env.ALLOWED_ORIGIN)throw fail(403,'Origin not allowed.');
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       if(path==='/state'&&request.method==='GET')return reply(publicState(await read(env.DB)));
+      if(path==='/admin/ai-check'&&request.method==='POST') {
+        if(!env.ADMIN_TOKEN||request.headers.get('authorization')!==`Bearer ${env.ADMIN_TOKEN}`)throw fail(401,'Owner access required.');
+        await bodyOf(request);
+        await limited(env.DB,'ai-check:'+Math.floor(Date.now()/60000),1,Date.now()+120000);
+        const checks=[];
+        for(const structured of [false,true]) {
+          let timer;
+          try {
+            const result=await Promise.race([
+              env.AI.run(MODEL,{messages:[{role:'user',content:'Return only this JSON: {"picks":[{"id":1,"score":80}]}'}],max_tokens:100,temperature:0,...(structured?{response_format:selectionFormat(1)}:{})}),
+              new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('AI timed out')),20000);})
+            ]).finally(()=>clearTimeout(timer));
+            checks.push({structured,ok:true,reply:aiReplyText(result).slice(0,500)});
+          }catch(error){
+            // Owner-only fixed synthetic prompt: no playlist, ratings or catalog data involved.
+            checks.push({structured,ok:false,...inferenceFailure(error),errorName:String(error?.name||'Error').slice(0,80),message:String(error?.message||error).slice(0,1200)});
+            if(['quota','access','rate_limit','model_unavailable'].includes(inferenceFailure(error).category))break;
+          }
+        }
+        return reply({build:RECOMMENDER_BUILD,model:MODEL,checks});
+      }
       if(path==='/admin/seed'&&request.method==='POST') {
         if(!env.ADMIN_TOKEN || request.headers.get('authorization')!==`Bearer ${env.ADMIN_TOKEN}`)throw fail(401,'Owner access required.');
         const body=await bodyOf(request,2*1024*1024);

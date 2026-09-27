@@ -202,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'inference-errors-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'ai-probe-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -377,4 +377,20 @@ test('Quota stops further AI/catalog work and reports quota instead of no matche
 test('All inference failures report service failure, not no matching taste',async()=>{
  const s=setup();s.env.AI.run=async()=>{throw Error('unclassified provider failure');};
  const response=await s.call('/refresh',{});assert.equal(response.status,503);const r=await response.json();assert.match(r.error,/No AI selections were returned/);assert.equal(r.selectionStats.attempts[0].inference.category,'provider_error');s.sqlite.close();
+});
+
+test('Leading Cloudflare codes and string errors are classified',()=>{
+ assert.equal(inferenceFailure(Error('5035: model requires Workers Paid plan')).category,'access');
+ assert.equal(inferenceFailure('3036: allocation exhausted').category,'quota');
+ assert.equal(inferenceFailure(Error('5007: No such model')).code,5007);
+});
+test('Unknown structured failure gets one unstructured retry with song validation',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>{if(++calls===1)throw Error('unclassified provider error');assert.equal(input.response_format,undefined);return {response:selection(input)};};
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);s.sqlite.close();
+});
+test('Owner probe needs authentication, uses no taste data, reports original synthetic errors',async()=>{
+ const s=setup();assert.equal((await s.call('/admin/ai-check',{})).status,401);
+ let calls=0;s.env.AI.run=async(model,input)=>{calls++;assert(!JSON.stringify(input).includes('Anchor Song'));if(input.response_format)throw Error('fixture upstream failure');return {response:{picks:[{id:1,score:80}]}};};
+ const r=await (await s.call('/admin/ai-check',{}, {authorization:'Bearer test-owner-secret'})).json();assert.equal(calls,2);assert.equal(r.checks[0].ok,true);assert.equal(r.checks[1].message,'fixture upstream failure');assert.equal((await s.state()).batch,null);
+ assert.equal((await s.call('/admin/ai-check',{}, {authorization:'Bearer test-owner-secret'})).status,429);s.sqlite.close();
 });
