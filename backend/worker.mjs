@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'resumable-12-1';
+export const RECOMMENDER_BUILD = 'taste-search-24-1';
 export const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -20,6 +20,7 @@ async function read(db) {
 }
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
+    batchTarget: 24, pendingSelectionStats: row.state.pending?.selectionStats || null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
@@ -183,11 +184,11 @@ async function refresh(env) {
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
     const draft=state.pending?.at>now-86400000?state.pending:null;
     let picks=draft?.items||[];
-    const selectionStats={build:RECOMMENDER_BUILD,target:12,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
+    const selectionStats={build:RECOMMENDER_BUILD,target:24,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
     // One refresh has a bounded request/time budget, including every replacement pool.
     const fetchCatalog=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline);
-    for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
+    for(let pool=0;pool<3&&picks.length<24&&Date.now()<deadline;pool++) {
       const poolState={...state,rotation:state.rotation+pool};
       let anchors=tasteAnchors(poolState,usedSources);
       if(!anchors.length&&picks.length){usedSources.clear();anchors=tasteAnchors(poolState,usedSources);}
@@ -205,8 +206,8 @@ async function refresh(env) {
       candidates.forEach(t=>examined.add(songKey(t)));
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
       const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
-      messages.push({role:'user',content:`There are already ${picks.length} accepted songs from earlier pools. Select up to ${12-picks.length} more. Already accepted artist counts: ${JSON.stringify(picks.reduce((counts,t)=>{counts[t.artist]=(counts[t.artist]||0)+1;return counts;},{}))}. Keep a maximum of two per artist across the complete batch.`});
-      for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
+      messages.push({role:'user',content:`There are already ${picks.length} accepted songs from earlier pools. Select up to ${24-picks.length} more. Already accepted artist counts: ${JSON.stringify(picks.reduce((counts,t)=>{counts[t.artist]=(counts[t.artist]||0)+1;return counts;},{}))}. Keep a maximum of two per artist across the complete batch.`});
+      for(let attempt=0;attempt<2&&picks.length<24&&Date.now()<deadline;attempt++) {
         let timer,response;
         const stats={pool:pool+1,returned:0,accepted:0};selectionStats.attempts.push(stats);
         try {
@@ -216,17 +217,17 @@ async function refresh(env) {
           ]).finally(()=>clearTimeout(timer));
         } catch {stats.error='inference failed';break;}
         const replyText=aiReplyText(response);
-        try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats);}
+        try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,24);}
         catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
         const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
-        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs from this pool: ${JSON.stringify(selectedIds)}. Return up to ${12-picks.length} additional supported selections as {"picks":[{"id":1,"score":80}]}. Compare each candidate to its embedded reference. Keep the same fit threshold and total two-per-artist limit. Do not repeat accepted songs.`});
+        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs from this pool: ${JSON.stringify(selectedIds)}. Return up to ${24-picks.length} additional supported selections as {"picks":[{"id":1,"score":80}]}. Compare each candidate to its embedded reference. Keep the same fit threshold and total two-per-artist limit. Do not repeat accepted songs.`});
       }
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;
     }
-    if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
+    if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 24 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     const at=Date.now();
-    const complete=picks.length===12;
+    const complete=picks.length===24;
     if(complete) {
       state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
       state.pending=null;
@@ -237,9 +238,35 @@ async function refresh(env) {
     }
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
-    return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. After the cooldown, refresh to find the remaining ${12-picks.length}. The visible batch has not changed.`};
+    return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'24 new AI picks saved for everyone.':`${picks.length}/24 approved songs saved in the shared draft. After the cooldown, refresh to find the remaining ${24-picks.length}. The visible batch has not changed.`};
   } finally { await query(env.DB,'UPDATE community SET lease=NULL,lease_until=0 WHERE id=1 AND lease=?',lease).run(); }
 }
+function catalogSong(provider,t) {
+  if(!t)return null;
+  const id=provider==='apple'?t.trackId:t.id;
+  const artist=provider==='apple'?t.artistName:t.artist?.name;
+  const title=provider==='apple'?t.trackName:t.title;
+  if(!Number.isSafeInteger(id)||id<=0||!validText(artist)||!validText(title)||!norm(artist)||!norm(title))return null;
+  if(provider==='apple'&&t.kind!=='song')return null;
+  return {provider,id,artist,title};
+}
+async function searchSongs(term,fetchCatalog) {
+  let succeeded=false;
+  for(const provider of ['apple','deezer']) {
+    const url=provider==='apple'?'https://itunes.apple.com/search?'+new URLSearchParams({term,entity:'song',media:'music',country:'IN',limit:'20'}):'https://api.deezer.com/search?'+new URLSearchParams({q:term,limit:'20'});
+    try {
+      const response=await fetchCatalog(url);if(!response.ok)continue;
+      const data=await response.json(),rows=provider==='apple'?data.results:data.data;
+      if(!Array.isArray(rows))continue;
+      succeeded=true;
+      const songs=[...new Map(rows.map(t=>catalogSong(provider,t)).filter(Boolean).map(t=>[songKey(t),t])).values()].slice(0,20);
+      if(songs.length)return songs;
+    } catch {}
+  }
+  if(!succeeded)throw fail(503,'Music search is unavailable. Please try again later.');
+  return [];
+}
+
 export default {
   async fetch(request, env) {
     const origin=request.headers.get('origin'), path=new URL(request.url).pathname;
@@ -262,10 +289,35 @@ export default {
           s.pending=null;
         }));
       }
-      if(request.method!=='POST'||!['/feedback','/refresh'].includes(path))throw fail(404,'Not found.');
+      if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add'].includes(path))throw fail(404,'Not found.');
       if(origin!==env.ALLOWED_ORIGIN)throw fail(403,'Use the dashboard to update the shared profile.');
       const body=await bodyOf(request);
       if(path==='/refresh')return reply(await refresh(env));
+      if(path==='/search'||path==='/taste/add') {
+        await ipLimit(request,env.DB);
+        const fetchCatalog=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000);
+        if(path==='/search') {
+          if(typeof body.query!=='string'||body.query.trim().length<2||body.query.length>200)throw fail(400,'Enter a song title or artist (2–200 characters).');
+          return reply({songs:await searchSongs(body.query.trim(),fetchCatalog)});
+        }
+        if(!['apple','deezer'].includes(body.provider)||!Number.isSafeInteger(body.id)||body.id<=0)throw fail(400,'Choose a song from search results.');
+        const url=body.provider==='apple'?'https://itunes.apple.com/lookup?id='+body.id+'&entity=song':'https://api.deezer.com/track/'+body.id;
+        let song;
+        try {
+          const response=await fetchCatalog(url);if(!response.ok)throw Error();
+          const data=await response.json();
+          song=catalogSong(body.provider,body.provider==='apple'?data.results?.find(t=>t.trackId===body.id):data);
+          if(!song||song.id!==body.id)throw Error();
+        } catch {throw fail(503,'Could not verify this catalog song. Please search again later.');}
+        return reply(await mutate(env.DB,s=>{
+          const {artist,title}=song,key=songKey(song);
+          if(s.songRatings[key]?.value==='replay')return;
+          s.songRatings[key]={artist,title,value:'replay',at:Date.now()};
+          if(Object.keys(s.songRatings).length>5000)throw fail(409,'Shared feedback is full. Ask the owner to archive it.');
+          s.pending=null;
+        }));
+      }
+
       const song=cleanSong(body), key=songKey(song);
       if(!['replay','skip','known','clear'].includes(body.rating))throw fail(400,'Invalid feedback.');
       await ipLimit(request,env.DB);

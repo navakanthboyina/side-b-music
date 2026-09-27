@@ -4,7 +4,7 @@ const key=t=>'track:'+t.artist.split(/\s*(?:,|&|;)\s*/).map(norm).sort().join('|
 const search=(artist,title)=>'https://www.youtube.com/results?search_query='+encodeURIComponent(artist+' '+title+' official');
 
 export async function startShared({apiBase},data,doc=document,win=window) {
-  const $=s=>doc.querySelector(s); let shared=null,busy=false,week=1,polling=false;
+  const $=s=>doc.querySelector(s); let shared=null,busy=false,week=1,polling=false,searchResults=[];
   const api=apiBase.replace(/\/$/,'');
   if(!/^https:\/\//.test(api))throw Error('The shared service needs an HTTPS URL.');
   const activeBatch=()=>shared?.batch?.relevanceVersion===2?shared.batch:null;
@@ -19,14 +19,14 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     if(!shared||value.revision>=shared.revision)shared=value;
     render();
   }
-  function controls(){doc.querySelectorAll('[data-shared-rating],#refresh').forEach(b=>b.disabled=busy||!shared||(b.id==='refresh'&&(shared.recommenderVersion!==2||shared.needsTasteImport)));}
+  function controls(){doc.querySelectorAll('[data-shared-rating],[data-add-taste],#song-search button,#refresh').forEach(b=>b.disabled=busy||!shared||(b.hasAttribute('data-add-taste')&&shared?.songRatings[key(searchResults[Number(b.dataset.addTaste)])]?.value==='replay'||b.id==='refresh'&&(shared.recommenderVersion!==2||shared.needsTasteImport)));}
   function card(t,i){
     const rating=shared?.songRatings[key(t)]?.value;
     return `<article class="music-card"><div class="card-top"><span>${t.aiSong?'SHARED AI PICK':'SHARED STARTER'}</span><span>${String(i+1).padStart(2,'0')}</span></div><div class="card-body"><h3>${esc(t.title)}</h3><div class="track-title">${esc(t.artist)}</div><p>${esc(t.reason)}</p><div class="card-links"><a class="listen" href="${search(t.artist,t.title)}" target="_blank" rel="noopener noreferrer">YouTube ↗</a><a class="alt-link" href="https://soundcloud.com/search/sounds?q=${encodeURIComponent(t.artist+' '+t.title)}" target="_blank" rel="noopener noreferrer">SoundCloud</a><a class="alt-link" href="https://bandcamp.com/search?q=${encodeURIComponent(t.artist+' '+t.title)}" target="_blank" rel="noopener noreferrer">Bandcamp</a></div></div><div class="card-feedback">${[['replay','Like'],['skip','Not for us'],['known','Already know']].map(([value,label])=>`<button class="rate" data-shared-rating="${rating===value?'clear':value}" data-artist="${esc(t.artist)}" data-title="${esc(t.title)}" aria-pressed="${rating===value}" aria-label="${esc(label+' '+t.title+' for everyone')}">${label}</button>`).join('')}</div></article>`;
   }
   function render(){
     const batch=activeBatch(), songs=batch?.items||[],weekSize=Math.ceil(songs.length/2);
-    $('#view-plan .page-heading .muted').textContent=songs.length===12?'Six songs each week from the complete shared batch.':`${songs.length} songs in the previous batch, split across both weeks while the next 12-song batch is prepared.`;
+    $('#view-plan .page-heading .muted').textContent=songs.length===24?'Twelve songs each week from the complete shared batch.':`${songs.length} songs in the previous batch, split across both weeks while the next 24-song batch is prepared.`;
     $('#feed').innerHTML=songs.map(card).join('')||'<p class="empty">No recommendations from the updated taste model yet. Complete playlist setup, then refresh.</p>';
     $('#feed-badge').textContent=batch?'SHARED AI · 14-DAY NO REPEATS':'AWAITING RELEVANT PICKS';
     $('#feed-status').textContent=batch?`${songs.length} ${songs.length===1?'song':'songs'} · shared batch saved ${new Date(batch.at).toLocaleString()}${batch.selectionStats?' · '+batch.selectionStats.candidateCount+' eligible candidates · '+batch.selectionStats.attempts.length+' AI passes':''}`:'Earlier batches are hidden because they used the old relevance rules.';
@@ -34,13 +34,13 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     $('#week-title').textContent=`Week ${week} · the shared mix`;
     $('#week-description').textContent='Songs from the current shared batch. Refresh replaces this plan for everyone.';
     $('#plan-count').textContent=`${songs.length} shared songs`;
-    $('#plan-cards').innerHTML=songs.slice((week-1)*weekSize,week*weekSize).map(card).join('')||'<p class="empty">No songs for this week yet. Refresh generates a complete 12-song batch.</p>';
+    $('#plan-cards').innerHTML=songs.slice((week-1)*weekSize,week*weekSize).map(card).join('')||'<p class="empty">No songs for this week yet. Refresh generates a complete 24-song batch.</p>';
     const ratings=Object.values(shared?.songRatings||{}).sort((a,b)=>b.at-a.at);
     $('#shared-count').textContent=String(shared?.seedSongCount||0);
     $('#shared-likes').textContent=String(ratings.filter(r=>r.value==='replay').length);
     $('#shared-ratings').innerHTML=ratings.map(t=>`<div class="rating-row"><div><strong>${esc(t.title)}</strong> · ${esc(t.artist)}<br><span>${({replay:'More songs like this',skip:'Exclude this song',known:'Already known'})[t.value]||''}</span></div><button class="secondary" data-shared-rating="clear" data-artist="${esc(t.artist)}" data-title="${esc(t.title)}">Clear for everyone</button></div>`).join('')||'<p>No shared feedback yet. Rate a song in Discover.</p>';
     $('.side-sources .small').textContent=shared?.seedSongCount?`${shared.seedSongCount} playlist songs guide catalog discovery. No Spotify sync.`:'Playlist starting taste has not been uploaded by the owner yet.';
-    controls();
+    renderSearch();controls();
   }
   function navigate(){
     const hash=win.location.hash.slice(1),view=['discover','plan','comfort','profile'].includes(hash)?hash:'discover';
@@ -51,24 +51,47 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   async function sync(){
     if(busy||polling||doc.hidden)return;
     polling=true;
-    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.pendingSongCount?`${shared.pendingSongCount}/12 approved songs saved in the shared draft. Refresh after the cooldown to continue filling it.`:shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Connected to the shared room. Everyone sees these picks and ratings.');}
+    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.pendingSongCount?`${shared.pendingSongCount}/${shared.batchTarget||24} approved songs saved in the shared draft. Refresh after the cooldown to continue filling it.`:shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Connected to the shared room. Everyone sees these picks and ratings.');}
     catch{status('Shared service unavailable. Showing the last loaded picks; feedback has not been saved locally.');}
     finally{polling=false;}
   }
-  $('.ai-panel').innerHTML='<p class="eyebrow accent">ONE SHARED LISTENING ROOM · NO SIGN-IN</p><h2>Everyone helps choose what comes next.</h2><p>Everyone sees the same songs. Feedback is public and affects the next batch for everyone. The latest rating for a song replaces its previous shared rating.</p><p class="small muted">AI compares real catalog tracks with a sample of playlist songs and individual song feedback. Each description identifies its reference song and labels musical similarity as an estimate. No model download or GPU is needed. It does not listen to the audio. New batches contain 12 qualifying songs. Refresh searches additional taste references when needed; if it cannot complete 12, approved picks are saved as a draft for the next refresh while the previous batch stays visible. Languages stay mixed. Refresh is limited to once a minute and 30 attempts per day for this room.</p><p id="ai-status" role="status">Connecting to the shared room…</p>';
+  $('.ai-panel').innerHTML='<p class="eyebrow accent">ONE SHARED LISTENING ROOM · NO SIGN-IN</p><h2>Everyone helps choose what comes next.</h2><p>Everyone sees the same songs. Feedback is public and affects the next batch for everyone. The latest rating for a song replaces its previous shared rating.</p><p class="small muted">AI compares real catalog tracks with a sample of playlist songs and individual song feedback. Each description identifies its reference song and labels musical similarity as an estimate. No model download or GPU is needed. It does not listen to the audio. New batches contain 24 qualifying songs: 12 per week. Refresh searches additional taste references when needed; if it cannot complete 24, approved picks are saved as a draft for the next refresh while the previous batch stays visible. Languages stay mixed. Refresh is limited to once a minute and 30 attempts per day for this room.</p><p id="ai-status" role="status">Connecting to the shared room…</p>';
   $('.filters').innerHTML='<span class="small">One mix for everyone · all languages · all moods</span>';
   $('.feature-panel').hidden=true;$('#ai-diagnostics').hidden=true;
   $('#basis').textContent='Shared feedback applies to individual songs. Recent recommendations stay excluded for 14 days across every browser.';
   $('.side-bottom .small').textContent='Shared across all browsers';
   $('[data-view="profile"]').textContent='Shared taste';
   $('.side-sources .text-link').textContent='Shared taste & song feedback →';
-  $('#view-profile').innerHTML='<div class="page-heading"><div><p class="eyebrow accent">ONE PROFILE FOR EVERYONE</p><h1>Our shared taste.</h1><p class="muted">No account needed. Anyone can change a song’s shared rating. The latest choice wins.</p></div></div><div class="stats"><div><strong id="shared-count">0</strong><span>Playlist starting songs</span></div><div><strong id="shared-likes">0</strong><span>Shared song likes</span></div></div><section class="panel spaced"><h2>Shared feedback</h2><div id="shared-ratings"></div></section><p class="notice">Playlist setup is managed by the owner. Your old browser-only feedback is not automatically published. A sample of playlist songs and shared feedback is sent to Cloudflare AI. Reference song names appear in recommendation descriptions. Shared ratings are public. A short-lived network hash limits rapid feedback; visitors have no accounts.</p>';
+  $('#view-profile').innerHTML='<div class="page-heading"><div><p class="eyebrow accent">ONE PROFILE FOR EVERYONE</p><h1>Our shared taste.</h1><p class="muted">No account needed. Anyone can change a song’s shared rating. The latest choice wins.</p></div></div><div class="stats"><div><strong id="shared-count">0</strong><span>Playlist starting songs</span></div><div><strong id="shared-likes">0</strong><span>Shared song likes</span></div></div><section class="panel spaced"><h2>Add a song to our taste</h2><p>Search a song you like, then add it as a shared song like. It will guide future recommendations for everyone. Adding or changing feedback restarts any unfinished draft.</p><form id="song-search"><label for="song-query">Song title or artist</label><div class="search-controls"><input id="song-query" type="search" minlength="2" maxlength="200" required placeholder="Song title and artist"><button class="secondary" type="submit">Search</button></div></form><p id="song-search-status" role="status"></p><div id="song-search-results"></div></section><section class="panel spaced"><h2>Shared feedback</h2><div id="shared-ratings"></div></section><p class="notice">Playlist setup is managed by the owner. Your old browser-only feedback is not automatically published. A sample of playlist songs and shared feedback is sent to Cloudflare AI. Reference song names appear in recommendation descriptions. Search queries go to the music catalog. Added songs and shared ratings are public. A short-lived network hash limits rapid feedback; visitors have no accounts.</p>';
   $('#view-discover .feedback-prompt p').textContent='Like prioritizes this song as a taste reference. Not for us is negative feedback for this song; Already know only excludes it. Each choice updates the shared profile for everyone.';
   $('#view-discover .feedback-prompt a').textContent='See shared taste';
   $('#view-plan h1').textContent='Our two-week plan.';
-  $('#view-plan .page-heading .muted').textContent='Six songs each week from a complete shared batch.';
+  $('#view-plan .page-heading .muted').textContent='Twelve songs each week from a complete shared batch.';
   $('#today').textContent=new Date().toLocaleDateString();
   $('#comfort-mixes').innerHTML=data.mixes.map(m=>`<article class="mix"><div class="mix-head"><h2>${esc(m.title)}</h2><p>${esc(m.note)}</p></div><ol>${m.tracks.map(([a,t])=>`<li><div><strong>${esc(t)}</strong><span>${esc(a)}</span></div><a href="${search(a,t)}" target="_blank" rel="noopener noreferrer">Play ↗</a></li>`).join('')}</ol></article>`).join('');
+  const searchStatus=text=>{$('#song-search-status').textContent=text;};
+  function renderSearch(){
+    $('#song-search-results').innerHTML=searchResults.map((t,i)=>{
+      const added=shared?.songRatings[key(t)]?.value==='replay';
+      return `<div class="rating-row"><div><strong>${esc(t.title)}</strong><br>${esc(t.artist)}</div><button class="secondary" data-add-taste="${i}" ${added?'disabled':''}>${added?'Added':'Add to taste'}</button></div>`;
+    }).join('');
+  }
+  $('#song-search').addEventListener('submit',async event=>{
+    event.preventDefault();if(busy||!shared)return;
+    busy=true;controls();searchStatus('Searching the music catalog…');
+    searchResults=[];renderSearch();
+    try{const result=await request('/search',{query:$('#song-query').value.trim()});searchResults=result.songs||[];renderSearch();searchStatus(searchResults.length?`${searchResults.length} songs found. Choose the recording you like.`:'No songs found. Try a title with the artist name.');}
+    catch(error){searchStatus(error.message);}
+    finally{busy=false;controls();renderSearch();}
+  });
+  $('#song-search-results').addEventListener('click',async event=>{
+    const button=event.target.closest('[data-add-taste]');if(!button||busy||!shared)return;
+    const song=searchResults[Number(button.dataset.addTaste)];if(!song)return;
+    busy=true;controls();searchStatus('Adding to our shared taste…');
+    try{accept(await request('/taste/add',{provider:song.provider,id:song.id}));searchStatus(`Added “${song.title}” to shared taste. It will guide the next batch for everyone.`);status('Shared taste updated. Any unfinished draft was reset to use the new feedback.');}
+    catch(error){searchStatus('Song was not added. '+error.message);}
+    finally{busy=false;controls();renderSearch();}
+  });
   $('#refresh').addEventListener('click',async()=>{
     if(busy||!shared)return;busy=true;controls();status('Generating the next shared AI batch. Everyone’s current picks stay available…');
     try{const result=await request('/refresh',{});accept(result);status(result.message||`${shared.batch?.items.length||0} AI picks saved for everyone.`);}

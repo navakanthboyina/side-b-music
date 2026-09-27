@@ -9,6 +9,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
   w.fetch=async(url,opt)=>{
    assert(!String(opt.body).includes('private'));
    if(fail)return {ok:false,json:async()=>({error:'Service unavailable'})};
+   if(url.endsWith('/search'))return {ok:true,json:async()=>({songs:[{provider:'apple',id:42,artist:'Search Fixture',title:'Search Song'}]})};
+   if(url.endsWith('/taste/add')){const t=JSON.parse(opt.body);assert.deepEqual(t,{provider:'apple',id:42});room.revision++;room.songRatings['track:searchfixture:searchsong']={artist:'Search Fixture',title:'Search Song',value:'replay',at:Date.now()};room.pendingSongCount=0;}
    if(url.endsWith('/feedback')){const t=JSON.parse(opt.body);room.revision++;room.songRatings['track:fixtureartist:'+t.title.toLowerCase()]={artist:t.artist,title:t.title,value:t.rating,at:Date.now()};}
    return {ok:true,json:async()=>structuredClone(room)};
   };
@@ -32,7 +34,15 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,1);
  assert.match(b.d.querySelector('#plan-cards').textContent,/Second/);
  room.revision++;room.pendingSongCount=8;await b.api.sync();
- assert.match(b.d.querySelector('#ai-status').textContent,/8\/12 approved songs/);
+ assert.match(b.d.querySelector('#ai-status').textContent,/8\/24 approved songs/);
+ room.revision++;room.batch.items=Array.from({length:24},(_,i)=>({artist:'Artist '+i,title:'Song '+i,aiSong:true,reason:'Fixture'}));await b.api.sync();
+ assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,12);
+ b.d.querySelector('[data-shared-week="1"]').click();assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,12);
+ b.d.querySelector('#song-query').value='Search Song';b.d.querySelector('#song-search').dispatchEvent(new b.w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setImmediate(r));
+ assert.match(b.d.querySelector('#song-search-results').textContent,/Search Song/);
+ b.d.querySelector('[data-add-taste]').click();await new Promise(r=>setImmediate(r));await a.api.sync();
+ assert.match(b.d.querySelector('#song-search-status').textContent,/Added/);assert.equal(b.d.querySelector('[data-add-taste]').disabled,true);
+ assert.match(a.d.querySelector('#shared-ratings').textContent,/Search Song/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

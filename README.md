@@ -11,7 +11,7 @@ One shared listening room, with no visitor sign-in. Everyone sees the same saved
 - Catalog queries use credits from those references. Results must match those credits; Deezer fallback resolves an exact artist ID before fetching tracks. Broad unrelated search hits are rejected.
 - Llama 3.2 3B compares real candidates with specific reference songs and recent individual feedback. It returns a fit score for each supplied candidate/reference pair. These estimates are not audio measurements or guaranteed similarity.
 - Every description names a validated reference song, says whether it was liked or in the playlist, and says that musical fit is a metadata-based estimate. Descriptions are built from verified reference data rather than model-written claims about instruments, tempo, or mood. There is no generic claim that every song matches the entire community.
-- Every successful new batch saves 12 accepted songs, at most two per credited artist. An incomplete attempt preserves the previous batch and saves approved picks in a shared draft. The next refresh continues filling that draft instead of discarding progress. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
+- Every successful new batch saves 24 accepted songs, at most two per credited artist. An incomplete attempt preserves the previous batch and saves approved picks in a shared draft. The next refresh continues filling that draft instead of discarding progress. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
 - Songs shown within 14 days, playlist-familiar songs and rated songs are excluded. The saved batch is split across two weeks, with all languages mixed. Older short batches are divided between both weeks; completed batches contain six songs per week.
 
 Playback stays on YouTube, SoundCloud or Bandcamp through search links. The comfort mixes are fixed curated lists, not live AI recommendations.
@@ -53,3 +53,11 @@ npm run check
 The backend suite uses real SQLite with simulated catalog/AI services. The browser test checks two independent shared sessions. `npm run check` validates the Worker bundle without deploying. Live provider access and musical quality must also be reviewed after deployment.
 
 The earlier browser-local implementation remains available only if `apiBase` is cleared. Its local feedback is not automatically uploaded into the shared room.
+
+### Song search and the two-week plan
+
+A complete shared batch contains 24 songs, split into 12 per week. Older batches stay visible until a full replacement is ready; drafts carry progress across refreshes. This does not guarantee completion during catalog or AI outages.
+
+In **Shared taste**, search by song title and artist and click **Add to taste**. Apple catalog search falls back to Deezer. The server looks up the selected catalog ID before recording an individual shared like; browser-supplied titles are not trusted. The added song guides future picks and is excluded from recommendations. Clear its like in Shared feedback to remove that influence. Search queries go to the catalog; added songs and ratings are public. Adding a new like resets an unfinished draft. No account, import, schema migration or new secret is required.
+
+The public API exposes `batchTarget`, `pendingSongCount` and `pendingSelectionStats` for diagnosing unfinished generation. Search and add use the existing network rate limit. POST `/search` accepts `{ "query": "song and artist" }`; POST `/taste/add` accepts a returned `{ "provider": "apple", "id": 123 }`. Both require the dashboard Origin.
