@@ -34,10 +34,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,1);
  assert.match(b.d.querySelector('#plan-cards').textContent,/Second/);
  room.revision++;room.pendingSongCount=8;await b.api.sync();
- assert.match(b.d.querySelector('#ai-status').textContent,/8\/24 approved songs/);
- room.revision++;room.batch.items=Array.from({length:24},(_,i)=>({artist:'Artist '+i,title:'Song '+i,aiSong:true,reason:'Fixture'}));await b.api.sync();
- assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,12);
- b.d.querySelector('[data-shared-week="1"]').click();assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,12);
+ assert.match(b.d.querySelector('#ai-status').textContent,/8\/12 approved songs/);
+ room.revision++;room.batch.items=Array.from({length:12},(_,i)=>({artist:'Artist '+i,title:'Song '+i,aiSong:true,reason:'Fixture'}));await b.api.sync();
+ assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,6);
+ b.d.querySelector('[data-shared-week="1"]').click();assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,6);
  b.d.querySelector('#song-query').value='Search Song';b.d.querySelector('#song-search').dispatchEvent(new b.w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setImmediate(r));
  assert.match(b.d.querySelector('#song-search-results').textContent,/Search Song/);
  b.d.querySelector('[data-add-taste]').click();await new Promise(r=>setImmediate(r));await a.api.sync();

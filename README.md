@@ -9,9 +9,9 @@ One shared listening room, with no visitor sign-in. Everyone sees the same saved
 - The owner imports playlist CSVs with `Artist Name(s),Track Name` or `Artist,Title` headers, maximum 2 MB each.
 - Up to 16 representative playlist songs and explicit liked songs provide song-level taste references. Likes take priority. Rated songs are excluded from new discoveries; skips are negative evidence, and Already know is exclusion only.
 - Catalog queries use credits from those references. Results must match those credits; Deezer fallback resolves an exact artist ID before fetching tracks. Broad unrelated search hits are rejected.
-- Llama 3.2 3B compares real candidates with specific reference songs and recent individual feedback. It returns a fit score for each supplied candidate/reference pair. These estimates are not audio measurements or guaranteed similarity.
+- Llama 3.1 8B compares real candidates with specific reference songs and recent individual feedback. It returns a fit score for each supplied candidate/reference pair. These estimates are not audio measurements or guaranteed similarity.
 - Every description names a validated reference song, says whether it was liked or in the playlist, and says that musical fit is a metadata-based estimate. Descriptions are built from verified reference data rather than model-written claims about instruments, tempo, or mood. There is no generic claim that every song matches the entire community.
-- Every successful new batch saves 24 accepted songs, at most two per credited artist. An incomplete attempt preserves the previous batch and saves approved picks in a shared draft. The next refresh continues filling that draft instead of discarding progress. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
+- Every successful new batch saves 12 accepted songs, at most two per credited artist. An incomplete attempt preserves the previous batch and saves approved picks in a shared draft. The next refresh continues filling that draft instead of discarding progress. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
 - Songs shown within 14 days, playlist-familiar songs and rated songs are excluded. The saved batch is split across two weeks, with all languages mixed. Older short batches are divided between both weeks; completed batches contain six songs per week.
 
 Playback stays on YouTube, SoundCloud or Bandcamp through search links. The comfort mixes are fixed curated lists, not live AI recommendations.
@@ -56,8 +56,14 @@ The earlier browser-local implementation remains available only if `apiBase` is 
 
 ### Song search and the two-week plan
 
-A complete shared batch contains 24 songs, split into 12 per week. Older batches stay visible until a full replacement is ready; drafts carry progress across refreshes. This does not guarantee completion during catalog or AI outages.
+A complete shared batch contains 12 songs, split into 6 per week. Older batches stay visible until a full replacement is ready; drafts carry progress across refreshes. This does not guarantee completion during catalog or AI outages.
 
 In **Shared taste**, search by song title and artist and click **Add to taste**. Apple catalog search falls back to Deezer. The server looks up the selected catalog ID before recording an individual shared like; browser-supplied titles are not trusted. The added song guides future picks and is excluded from recommendations. Clear its like in Shared feedback to remove that influence. Search queries go to the catalog; added songs and ratings are public. Adding a new like resets an unfinished draft. No account, import, schema migration or new secret is required.
 
 The public API exposes `batchTarget`, `pendingSongCount` and `pendingSelectionStats` for diagnosing unfinished generation. Search and add use the existing network rate limit. POST `/search` accepts `{ "query": "song and artist" }`; POST `/taste/add` accepts a returned `{ "provider": "apple", "id": 123 }`. Both require the dashboard Origin.
+
+### Bounded AI selection (bounded-selection-12-1)
+
+The target is 12 accepted songs: six per week. Workers AI now uses `@cf/meta/llama-3.1-8b-instruct`, a model listed as supporting JSON mode, with a `json_schema` response format. Each pool has its own ID enum and maximum array length. Prompts cap the requested selection count at the smaller of pool size and remaining slots; they never ask a four-song pool to fill a full batch. Runtime validation still rejects invented IDs, weak scores and repeats. Invalid JSON or inference failure gets one bounded retry; complete JSON surrounded by prose can be parsed, but incomplete JSON is never guessed or repaired into selections. No catalog-only filler is labeled AI. Searches omit artists already at the two-song cap. Existing approved drafts continue toward the smaller target, capped at 12 when published. Free AI allowance and catalog availability still apply; the larger model may consume allowance faster.
+
+Schema documentation: https://developers.cloudflare.com/workers-ai/features/json-mode/ . Tests use synthetic provider/AI fixtures and the local Cloudflare runtime; live AI quality and completion still need verification after deployment. No migration or playlist re-import is required.
