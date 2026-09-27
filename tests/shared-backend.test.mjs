@@ -13,6 +13,21 @@ function selection(input){
   return count<2?[{id:t.id,score:85,reason:'A likely match for the gentle melodic phrasing of the reference song.'}]:[];
  }).slice(0,12)};
 }
+function fixtureCatalog(input){
+ const u=new URL(input);
+ if(u.hostname==='itunes.apple.com')return Response.json({results:[]});
+ if(u.pathname==='/search'){
+  const q=u.searchParams.get('q'),n=Number(q.match(/Fixture Artist (\d+)/)?.[1]);
+  if(!q.includes('Fixture Artist'))return Response.json({data:[]});
+  const title=q.slice(('Fixture Artist '+n+' ').length),songIndex=title.match(/Fixture Song (\d+)/)?.[1];
+  return Response.json({data:[{id:n*100+1+(songIndex===undefined?0:Number(songIndex)+1),artist:{name:'Fixture Artist '+n},title,album:{id:n+1}}]});
+ }
+ if(u.pathname.startsWith('/album/')){
+  const n=Number(u.pathname.split('/')[2])-1,artist={name:'Fixture Artist '+n};
+  return Response.json({id:n+1,title:'Fixture Release '+n,record_type:'album',release_date:'2020-01-01',genres:{data:[{name:'Pop'}]},tracks:{data:[{id:n*100+1,artist,title:'Anchor Song '+n},...Array.from({length:8},(_,i)=>({id:n*100+i+2,artist,title:'Fixture Song '+i}))]}});
+ }
+ throw Error('Unexpected fixture URL');
+}
 function setup(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../backend/migrations/0001_community.sql',import.meta.url),'utf8'));
  const DB={prepare(sql){return {bind(...args){return {
@@ -22,7 +37,7 @@ function setup(){
  const seedSongs=Array.from({length:16},(_,i)=>({artist:'Fixture Artist '+i,title:'Anchor Song '+i}));
  const row=sqlite.prepare('SELECT data FROM community WHERE id=1').get();const data=JSON.parse(row.data);data.seedSongs=seedSongs;data.familiar=Object.fromEntries(seedSongs.map(t=>[songKey(t),true]));sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(data));
  let aiCalls=0, catalogCalls=0;
- const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(url){catalogCalls++;const artist=new URL(url).searchParams.get('term');return Response.json({results:Array.from({length:8},(_,i)=>({artistName:artist,trackName:'Fixture Song '+i,primaryGenreName:'Pop'}))});}};
+ const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(input){catalogCalls++;return fixtureCatalog(input);}};
  const call=(path,body,extra={})=>worker.fetch(new Request('https://backend.example'+path,{method:body===undefined?'GET':'POST',headers:{origin:env.ALLOWED_ORIGIN,'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)}),env);
  const state=()=>call('/state').then(r=>r.json());
  const cooldown=()=>sqlite.exec('UPDATE community SET next_refresh=0');
@@ -45,19 +60,10 @@ test('Catalog results unrelated to requested artist never reach AI',async()=>{
  const s=setup();s.env.CATALOG_FETCH=async url=>Response.json(new URL(url).hostname==='itunes.apple.com'?{results:[{artistName:'Unrelated Generic Artists',trackName:'Random Search Hit'}]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);assert.match((await response.json()).error,/Found 0 of 12/);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
-test('Deezer fallback resolves exact artist ID before requesting tracks',async()=>{
- const s=setup();const names=new Map();let topCalls=0;
- s.env.CATALOG_FETCH=async input=>{
-  assert.equal(typeof input,'string');const url=new URL(input);
-  if(url.hostname==='itunes.apple.com')return new Response('',{status:403});
-  if(url.pathname==='/search/artist'){
-   const name=url.searchParams.get('q'),id=names.size+1;names.set(id,name);
-   return Response.json({data:[{id:99999,name:'Unrelated Artist'},{id,name}]});
-  }
-  const id=Number(url.pathname.split('/')[2]);assert(names.has(id));topCalls++;
-  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:names.get(id)},title:'Fallback Song '+i}))});
- };
- assert.equal((await s.call('/refresh',{})).status,200);assert(topCalls>0);s.sqlite.close();
+test('Deezer resolves exact reference track then verifies album membership',async()=>{
+ const s=setup();let albumCalls=0;const original=s.env.CATALOG_FETCH;
+ s.env.CATALOG_FETCH=async input=>{if(new URL(input).pathname.startsWith('/album/'))albumCalls++;return original(input);};
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert(albumCalls>0);assert(r.batch.items.every(t=>t.reason.includes('Fixture Release')));s.sqlite.close();
 });
 test('Only explicit credit matches allowed; punctuation variants work; generic credits ignored',()=>{
  assert(matchesArtist('A. B. Singer & Guest','A B Singer'));
@@ -202,7 +208,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'score-coverage-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'release-evidence-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -354,7 +360,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'release-evidence-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -418,13 +424,60 @@ test('Failing catalog host is paused without blocking the other catalog or spend
  assert.equal((await get('https://api.deezer.com/search/artist?q=fixture')).status,200);assert.equal(stats.catalogRequests,4);
 });
 
-test('All valid low scores advance to fresh pools without rescoring rejected songs',async()=>{
+test('Catalog evidence remains eligible when AI priority scores are low',async()=>{
  const s=setup();let calls=0;s.env.AI.run=async(model,input)=>{calls++;const p=JSON.parse(input.messages[1].content);return {response:{picks:p.candidates.map(t=>({id:t.id,score:40}))}};};
- const r=await (await s.call('/refresh',{})).json();assert.equal(r.selectionStats.attempts.length,r.selectionStats.pools.filter(p=>p.candidates>0).length);
- assert.equal(calls,r.selectionStats.attempts.length);for(const a of r.selectionStats.attempts){assert.equal(a.scoreDistribution['40'],a.returned);assert.equal(a.rejected.lowScore,a.returned);}s.sqlite.close();
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,1);assert(r.batch.items.every(t=>t.reason.includes('AI-ranked from catalog evidence')));s.sqlite.close();
 });
 test('Diagnostics expose actual numeric scores without changing their scale or accepting weak songs',()=>{
  const anchors=[{id:1,artist:'Fixture',title:'Reference',source:'liked song'}],candidates=[{artist:'Fixture',title:'Candidate',anchorIds:[1]}],stats={};
  assert.throws(()=>parseRelevantPicks('{"picks":[{"id":1,"score":0.8}]}',candidates,anchors,[],stats));
  assert.deepEqual(stats.scoreDistribution,{'0.8':1});assert.equal(stats.rejected.lowScore,1);assert.deepEqual(stats.scoredIds,[1]);
+});
+
+test('Catalog-owned same-release connection admits other performers, excludes rated songs and describes evidence honestly',async()=>{
+ const s=setup(),original=s.env.CATALOG_FETCH;
+ s.env.CATALOG_FETCH=async input=>{
+  const response=await original(input),data=await response.json();
+  if(new URL(input).pathname.startsWith('/album/'))data.tracks.data.slice(1).forEach((t,i)=>{t.artist.name='Guest Performer '+i;t.title+=' Release '+data.id;});
+  return Response.json(data);
+ };
+ s.env.AI.run=async(model,input)=>({response:{picks:JSON.parse(input.messages[1].content).candidates.map(t=>({id:t.id,score:0}))}});
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert(r.batch.items.every(t=>t.artist.startsWith('Guest Performer')));
+ assert(r.batch.items.every(t=>t.reason.includes('appear on')&&t.reason.includes('not a guarantee')));
+ assert(r.batch.items.every(t=>!t.reason.includes('share an artist credit')&&!t.reason.includes('energetic')));s.sqlite.close();
+});
+test('Same artist alone or wrong reference album membership cannot become evidence',async()=>{
+ for(const mode of ['wrong-title','missing-reference','compilation']){
+  const s=setup(),original=s.env.CATALOG_FETCH;
+  s.env.CATALOG_FETCH=async input=>{const data=await (await original(input)).json();const path=new URL(input).pathname;
+   if(path==='/search'&&mode==='wrong-title')data.data.forEach(t=>t.title='Unrelated Title');
+   if(path.startsWith('/album/')){if(mode==='missing-reference')data.tracks.data.shift();if(mode==='compilation')data.record_type='compile';}
+   return Response.json(data);
+  };
+  await s.call('/refresh',{});assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
+ }
+});
+test('Previous scoring draft is not mixed into a new evidence-based batch',async()=>{
+ const s=setup(),data=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ data.pending={at:Date.now(),selectionStats:{build:'score-coverage-12-1'},items:[{artist:'Legacy',title:'Unsupported draft'}]};s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(data));
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.selectionStats.resumedCount,0);assert(!JSON.stringify(r.batch).includes('Unsupported draft'));s.sqlite.close();
+});
+
+test('Apple fallback verifies both tracks against a specific collection ID',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async input=>{
+  const u=new URL(input);if(u.hostname==='api.deezer.com')return new Response('',{status:503});
+  if(u.pathname==='/search'){
+   const q=u.searchParams.get('term'),n=Number(q.match(/Fixture Artist (\d+)/)?.[1]);
+   return Response.json({results:[{artistName:'Fixture Artist '+n,trackName:'Anchor Song '+n,trackId:n*100+1,collectionId:n+1}]});
+  }
+  const n=Number(u.searchParams.get('id'))-1;
+  return Response.json({results:[{artistName:'Fixture Artist '+n,trackName:'Anchor Song '+n,trackId:n*100+1,collectionId:n+1,collectionName:'Verified Release '+n,primaryGenreName:'Soundtrack'},...Array.from({length:4},(_,i)=>({artistName:'Fixture Artist '+n,trackName:'New Apple Song '+i,trackId:n*100+i+2,collectionId:n+1}))]});
+ };
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert(r.batch.items.every(t=>t.reason.includes('in Apple')&&t.reason.includes('Verified Release')));s.sqlite.close();
+});
+test('Repeated album requests share catalog response safely',async()=>{
+ const {memoizedCatalogFetch}=await import('../backend/evidence.mjs');let calls=0;
+ const get=memoizedCatalogFetch(async()=>{calls++;return Response.json({tracks:[1,2]});});
+ const responses=await Promise.all([get('https://api.deezer.com/album/1'),get('https://api.deezer.com/album/1')]);
+ assert.deepEqual(await responses[0].json(),{tracks:[1,2]});assert.deepEqual(await responses[1].json(),{tracks:[1,2]});assert.equal(calls,1);
 });

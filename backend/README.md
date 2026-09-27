@@ -1,3 +1,15 @@
+# Current discovery design: release-evidence-1
+
+The Worker resolves a specific taste song by title and artist in Deezer (Apple fallback), fetches its release by catalog ID, and requires the reference recording to be present in the returned track list. Candidates must be other valid recordings on that release. Deezer compilations are skipped. Other performers are allowed, so this is a reference-song relationship rather than an artist-only search. Familiar, rated and recent songs remain excluded; at most two per credited artist are selected.
+
+Catalog metadata includes release title, available genre and date. AI ranks this supplied evidence using song feedback; it does not guess unknown songs’ sound. The former 70/100 self-confidence gate no longer applies to verified release candidates. Every selection must still be returned by AI as a valid ID with a finite priority score; catalog-only filler is not substituted. Invalid evidence fails validation. Descriptions are constructed from catalog data and say that a shared release does not guarantee similar sound.
+
+The target is 12 songs (six each week). Old scoring drafts are rebuilt once; new drafts resume. Visible batches and feedback are retained. No migration, re-import or new secret is required. Duplicate catalog URLs within a refresh share a response, reducing repeated album calls. Three pools, two AI passes per pool, 30 network requests, and the existing deadline remain bounded. Exact catalog matches may be unavailable; no full-batch guarantee is made during outages or exhaustion. Titles differing materially between providers will not be guessed equivalent.
+
+Tests cover both catalog formats, cross-performer discoveries, exact reference validation, missing-reference and compilation rejection, bounded requests, shared feedback, draft handling and browser rendering. Live catalog data could not be retrieved successfully from the development environment; deployment validation remains necessary.
+
+The sections below include setup instructions and historical implementation notes. This section supersedes old descriptions of artist-only candidate search and the 70-point eligibility cutoff.
+
 # Shared room deployment
 
 This backend makes recommendations and song feedback the same for everyone, with no visitor accounts. GitHub Pages continues to serve the dashboard. Cloudflare Workers runs AI and the API; D1 stores the shared state. A Cloudflare owner account is required once for deployment. Keep it on the Workers **Free** plan if you want hard free-tier limits rather than paid overages.
