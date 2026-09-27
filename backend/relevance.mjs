@@ -22,19 +22,28 @@ export function relevanceMessages(candidates,anchors,feedback) {
  {role:'user',content:JSON.stringify({anchors,feedback,candidates:candidates.map((t,i)=>({id:i+1,artist:t.artist,title:t.title,genre:t.genre,anchorIds:t.anchorIds}))})}];
 }
 export function parseRelevantPicks(text,candidates,anchors,existing=[],stats={}) {
- let data;try{data=JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{throw Error('AI reply was not valid JSON');}
- if(!Array.isArray(data.picks))throw Error('AI reply needs a picks array with song-specific reasons');
+ stats.rejected={invalidObject:0,invalidId:0,invalidReference:0,referenceMismatch:0,invalidScore:0,lowScore:0,invalidReason:0,duplicate:0,artistLimit:0};
+ stats.accepted=0;
+ let data;try{data=JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{stats.formatError='invalid_json';throw Error('AI reply was not valid JSON');}
+ if(!Array.isArray(data.picks)){stats.formatError='missing_picks_array';throw Error('AI reply needs a picks array with song-specific reasons');}
  stats.returned=data.picks.length;
+ const reject=type=>{stats.rejected[type]++;};
  const out=[...existing],seen=new Set(existing.map(songKey)),artists=new Map();
  for(const t of existing)artists.set(norm(t.artist),(artists.get(norm(t.artist))||0)+1);
  for(const raw of data.picks.slice(0,30)) {
-  if(!raw||typeof raw!=='object')continue;
+  if(!raw||typeof raw!=='object'){reject('invalidObject');continue;}
   const integer=v=>typeof v==='string'&&/^\d+$/.test(v.trim())?Number(v):v;
   const p={...raw,id:integer(raw.id),anchorId:integer(raw.anchorId),score:integer(raw.score)};
-  if(!Number.isInteger(p.id)||!Number.isInteger(p.anchorId)||typeof p.score!=='number'||p.score<70||p.score>100||typeof p.reason!=='string'||p.reason.trim().length<15||p.reason.length>300)continue;
+  if(!Number.isInteger(p.id)||p.id<1||p.id>candidates.length){reject('invalidId');continue;}
+  if(!Number.isInteger(p.anchorId)){reject('invalidReference');continue;}
   const t=candidates[p.id-1],a=anchors.find(a=>a.id===p.anchorId);
-  if(!t||!a||!t.anchorIds.includes(a.id)||seen.has(songKey(t)))continue;
-  const artist=norm(t.artist);if((artists.get(artist)||0)>=2)continue;
+  if(!a){reject('invalidReference');continue;}
+  if(!t.anchorIds.includes(a.id)){reject('referenceMismatch');continue;}
+  if(typeof p.score!=='number'||!Number.isFinite(p.score)||p.score<0||p.score>100){reject('invalidScore');continue;}
+  if(p.score<70){reject('lowScore');continue;}
+  if(typeof p.reason!=='string'||p.reason.trim().length<15||p.reason.length>300){reject('invalidReason');continue;}
+  if(seen.has(songKey(t))){reject('duplicate');continue;}
+  const artist=norm(t.artist);if((artists.get(artist)||0)>=2){reject('artistLimit');continue;}
   seen.add(songKey(t));artists.set(artist,(artists.get(artist)||0)+1);
   out.push({...t,reason:`Starting point: “${a.title}” by ${a.artist} (${a.source}). AI-estimated fit: ${p.reason.trim()} This is a metadata-based estimate, not audio analysis.`,aiSong:true});
   if(out.length===12)break;

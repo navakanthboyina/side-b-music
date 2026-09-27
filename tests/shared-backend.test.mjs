@@ -155,3 +155,15 @@ test('Expansion cannot exceed per-artist cap or admit low-confidence selections'
  const combined=parseRelevantPicks(JSON.stringify({picks:[pick(1),pick(2),pick(3),{...pick(4),score:50}]}),candidates,anchors,first);
  assert.equal(combined.length,2);assert.deepEqual(combined.map(t=>t.title),['Song 0','Song 1']);
 });
+
+test('Rejection counts distinguish wrong references, low scores, fields, and limits',()=>{
+ const anchors=[{id:1,artist:'Reference',title:'Song',source:'playlist song'},{id:2,artist:'Other',title:'Other',source:'playlist song'}];
+ const candidates=[{artist:'Performer',title:'A',anchorIds:[1]},{artist:'Performer',title:'B',anchorIds:[1]},{artist:'Performer',title:'C',anchorIds:[1]}];
+ const p={id:1,anchorId:1,score:80,reason:'Likely similar melodic phrasing and acoustic arrangement.'};
+ const stats={};
+ const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,anchorId:99},{...p,anchorId:2},{...p,score:120},{...p,score:50},{...p,reason:'short'},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
+ assert.equal(result.length,2);assert.equal(stats.returned,11);assert.equal(stats.accepted,2);
+ assert(Object.values(stats.rejected).every(n=>n===1));
+ const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
+ const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
+});
