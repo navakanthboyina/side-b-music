@@ -3,14 +3,15 @@ export const RELEVANCE_VERSION = 2;
 const norm = s => String(s).normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export const credits = s => [...new Set([s,...String(s).split(/\s*(?:,|&|;|\bfeat\.?|\bfeaturing)\s*/i)].map(x=>x.trim()).filter(x=>norm(x).length>2&&!['variousartists','various','artist','artists','unknown','unknownartist','na'].includes(norm(x))))];
 export const matchesArtist = (credit, query) => credits(credit).some(x=>norm(x)===norm(query));
-export function tasteAnchors(state) {
+export function tasteAnchors(state,usedSources=new Set()) {
  const ratings=Object.values(state.songRatings||{}).sort((a,b)=>b.at-a.at);
  const liked=ratings.filter(t=>t.value==='replay');
  const seeds=(state.seedSongs||[]).filter(t=>!state.songRatings[songKey(t)]);
  const rotated=seeds.length?Array.from({length:seeds.length},(_,i)=>seeds[(state.rotation*12+i)%seeds.length]):[];
  const seen=new Set(),counts=new Map(),out=[];
  for(const t of [...liked.slice(0,8),...rotated]) {
-  const k=songKey(t),artist=credits(t.artist)[0];if(!artist||seen.has(k)||(counts.get(norm(artist))||0)>=2)continue;
+  const names=credits(t.artist);if(names.every(n=>usedSources.has(norm(n))))continue;
+  const k=songKey(t),artist=names[0];if(!artist||seen.has(k)||(counts.get(norm(artist))||0)>=2)continue;
   seen.add(k);counts.set(norm(artist),(counts.get(norm(artist))||0)+1);
   out.push({id:out.length+1,artist:t.artist,title:t.title,source:t.value==='replay'?'liked song':'playlist song'});
   if(out.length===16)break;

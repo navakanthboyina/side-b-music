@@ -43,7 +43,7 @@ test('Shared batch, individual ratings, refresh cooldown and no repeats',async()
 });
 test('Catalog results unrelated to requested artist never reach AI',async()=>{
  const s=setup();s.env.CATALOG_FETCH=async url=>Response.json(new URL(url).hostname==='itunes.apple.com'?{results:[{artistName:'Unrelated Generic Artists',trackName:'Random Search Hit'}]}:{data:[]});
- const response=await s.call('/refresh',{});assert.equal(response.status,422);assert.match((await response.json()).error,/artistMismatch/);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);assert.match((await response.json()).error,/Found 0 of 12/);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
 test('Deezer fallback resolves exact artist ID before requesting tracks',async()=>{
  const s=setup();const names=new Map();let topCalls=0;
@@ -132,7 +132,7 @@ test('A one-song first pass is expanded without duplicates or relaxing relevance
  s.env.AI.run=async(model,input)=>{
   calls++;const full=selection(input);
   if(calls===1)return {response:{picks:full.picks.slice(0,1)}};
-  assert.match(input.messages.at(-1).content,/ADDITIONAL supported matches/);
+  assert.match(input.messages.at(-1).content,/additional supported selections/);
   return {response:full};
  };
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
@@ -140,12 +140,13 @@ test('A one-song first pass is expanded without duplicates or relaxing relevance
  assert.equal(new Set(batch.items.map(songKey)).size,12);
  assert.deepEqual(batch.selectionStats.attempts.map(t=>t.accepted),[1,11]);s.sqlite.close();
 });
-test('A failed expansion retains valid initial picks and records a partial result',async()=>{
- const s=setup();let calls=0;
- s.env.AI.run=async(model,input)=>{if(++calls===2)throw Error('Provider unavailable');return {response:{picks:selection(input).picks.slice(0,1)}};};
- assert.equal((await s.call('/refresh',{})).status,200);
- const batch=(await s.state()).batch;assert.equal(batch.items.length,1);
- assert.equal(batch.selectionStats.attempts[1].error,'inference failed');s.sqlite.close();
+test('An incomplete expansion preserves the previous complete batch',async()=>{
+ const s=setup();await s.call('/refresh',{});const before=(await s.state()).batch;s.cooldown();let calls=0;
+ s.env.AI.run=async(model,input)=>{if(++calls>1)throw Error('Provider unavailable');return {response:{picks:selection(input).picks.slice(0,1)}};};
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);
+ const error=await response.json();assert.match(error.error,/Found 1 of 12/);
+ assert(error.selectionStats.attempts.some(t=>t.error==='inference failed'));
+ assert.deepEqual((await s.state()).batch,before);assert.equal((await s.state()).refreshing,false);s.sqlite.close();
 });
 test('Expansion cannot exceed per-artist cap or admit low-confidence selections',()=>{
  const anchors=[{id:1,artist:'Anchor Artist',title:'Anchor',source:'playlist song'}];
@@ -202,10 +203,41 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'paired-scores-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'fresh-pools-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
  }
  s.sqlite.close();
+});
+
+test('Six initial picks trigger a fresh pool with different sources and reach twelve',async()=>{
+ const s=setup(),firstPoolKeys=new Set();let calls=0;
+ s.env.AI.run=async(model,input)=>{
+  calls++;const candidates=JSON.parse(input.messages[1].content).candidates;
+  if(calls===1){candidates.forEach(t=>firstPoolKeys.add(t.artist+'|'+t.title));return {response:{picks:selection(input).picks.slice(0,6)}};}
+  if(calls===2)return {response:{picks:[]}};
+  assert(candidates.every(t=>!firstPoolKeys.has(t.artist+'|'+t.title)));
+  return {response:selection(input)};
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);
+ assert.equal(batch.selectionStats.pools.length,2);
+ assert.deepEqual(batch.selectionStats.pools.map(p=>p.accepted),[6,6]);
+ assert.equal(new Set(batch.items.map(songKey)).size,12);
+ const counts={};for(const t of batch.items)counts[t.artist]=(counts[t.artist]||0)+1;
+ assert(Object.values(counts).every(n=>n<=2));assert(batch.selectionStats.catalogRequests<=30);
+ s.sqlite.close();
+});
+test('Exhausted provider requests stop within the shared budget and never invoke AI',async()=>{
+ const s=setup();let requests=0;
+ s.env.CATALOG_FETCH=async input=>{
+  requests++;const u=new URL(input);
+  if(u.hostname==='itunes.apple.com')return new Response('',{status:503});
+  if(u.pathname==='/search/artist')return Response.json({data:[{name:u.searchParams.get('q'),id:1}]});
+  return Response.json({data:[]});
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);
+ const error=await response.json();assert(requests<=30);assert.equal(error.selectionStats.catalogRequests,requests);
+ assert(error.selectionStats.pools.length<=3);assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
 });

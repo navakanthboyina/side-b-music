@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'paired-scores-1';
+export const RECOMMENDER_BUILD = 'fresh-pools-12-1';
 export const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -93,15 +93,17 @@ async function catalogTracks(name, fetchCatalog, accept, stats) {
   if (succeeded) return [];
   throw new Error(failures.join('; '));
 }
-export async function collectCandidates(state, fetchCatalog = fetch) {
-  const anchors=tasteAnchors(state), seeds = new Map();
+export async function collectCandidates(state, fetchCatalog = fetch, options={}) {
+  const anchors=options.anchors||tasteAnchors(state), seeds = new Map();
   if(!anchors.length) throw fail(409,'Playlist song details need a one-time owner re-import before relevant recommendations can be generated.');
   for(const anchor of anchors) for(const name of credits(anchor.artist)) {
+    if(options.usedSources?.has(norm(name)))continue;
     if(!seeds.has(norm(name)))seeds.set(norm(name),{name,anchorIds:[]});
     seeds.get(norm(name)).anchorIds.push(anchor.id);
   }
-  const selected=[...seeds.values()].slice(0,12);
-  const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
+  const selected=[...seeds.values()].slice(0,options.sourceLimit||12);
+  for(const source of selected)options.usedSources?.add(norm(source.name));
+  const excluded = new Set([...(options.excluded||[]), ...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
   const stats = {searches:0,rows:0,invalid:0,artistMismatch:0,excluded:0,duplicate:0};
   const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0; const failureReasons = new Set();
   // Try more artists when the first searches contain only familiar songs.
@@ -157,38 +159,53 @@ async function refresh(env) {
     // Advance source rotation even on empty catalog/AI failure, without replacing the saved batch.
     await mutate(env.DB, s=>{s.rotation++;});
     const row = await read(env.DB), state = row.state;
-    const candidates = await collectCandidates(state, env.CATALOG_FETCH || fetch);
-    if (!candidates.length) throw fail(422, 'No unseen catalog songs in this search. Existing picks remain; refresh later to try other sources.');
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
-    const anchors=tasteAnchors(state);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const messages = relevanceMessages(candidates,anchors,feedback); let picks=[];
-    const selectionStats={build:RECOMMENDER_BUILD,candidateCount:candidates.length,attempts:[]};
-    for (let attempt=0;attempt<2;attempt++) {
-      let timer, response;
-      const stats={returned:0,accepted:0}; selectionStats.attempts.push(stats);
+    let picks=[];
+    const selectionStats={build:RECOMMENDER_BUILD,target:12,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
+    const usedSources=new Set(),examined=new Set(),deadline=now+155000;
+    // One refresh has a bounded request/time budget, including every replacement pool.
+    const fetchCatalog=async(url,options={})=>{
+      if(selectionStats.catalogRequests>=30||Date.now()>=deadline)throw Error('Catalog search budget exhausted');
+      selectionStats.catalogRequests++;
+      return (env.CATALOG_FETCH||fetch)(url,{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'error'});
+    };
+    for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
+      const poolState={...state,rotation:state.rotation+pool};
+      const anchors=tasteAnchors(poolState,usedSources);
+      if(!anchors.length){if(pool===0)throw fail(409,'Playlist song details need a one-time owner re-import before relevant recommendations can be generated.');break;}
+      const poolStats={pool:pool+1,candidates:0,accepted:0};selectionStats.pools.push(poolStats);
+      let candidates;
       try {
-        response = await Promise.race([
-          env.AI.run(MODEL,{messages,max_tokens:1800,temperature:0.3}),
-          new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
-        ]).finally(()=>clearTimeout(timer));
+        candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6});
       } catch(error) {
-        stats.error='inference failed';
-        if(picks.length)break;
-        throw error;
+        poolStats.error=error.status===422?'no fresh candidates':'catalog unavailable';
+        if(selectionStats.catalogRequests>=30)break;
+        continue;
       }
-      const replyText = aiReplyText(response);
-      try { picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats); }
-      catch (error) {
-        stats.error='validation failed';
-        console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));
-        if(attempt===1&&!picks.length)throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
+      candidates.forEach(t=>examined.add(songKey(t)));
+      poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
+      const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
+      messages.push({role:'user',content:`There are already ${picks.length} accepted songs from earlier pools. Select up to ${12-picks.length} more. Already accepted artist counts: ${JSON.stringify(picks.reduce((counts,t)=>{counts[t.artist]=(counts[t.artist]||0)+1;return counts;},{}))}. Keep a maximum of two per artist across the complete batch.`});
+      for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
+        let timer,response;
+        const stats={pool:pool+1,returned:0,accepted:0};selectionStats.attempts.push(stats);
+        try {
+          response=await Promise.race([
+            env.AI.run(MODEL,{messages,max_tokens:1800,temperature:0.3}),
+            new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('AI timed out')),Math.max(1,Math.min(35000,deadline-Date.now())));})
+          ]).finally(()=>clearTimeout(timer));
+        } catch {stats.error='inference failed';break;}
+        const replyText=aiReplyText(response);
+        try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats);}
+        catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
+        const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
+        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs from this pool: ${JSON.stringify(selectedIds)}. Return up to ${12-picks.length} additional supported selections as {"picks":[{"id":1,"score":80}]}. Compare each candidate to its embedded reference. Keep the same fit threshold and total two-per-artist limit. Do not repeat accepted songs.`});
       }
-      if(picks.length>=12)break;
-      const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
-      messages.push({role:'user',content:
-        `Last pass validation counts: ${JSON.stringify(stats)}. Fix any formatting or reference errors using the original candidate data. Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"score":80}]}. Use only valid candidate IDs. Compare each to its embedded reference song; return only id and score, with no reference IDs or explanations. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
+      poolStats.accepted=picks.length-before;
+      if(selectionStats.catalogRequests>=30)break;
     }
+    if(picks.length<12)throw Object.assign(fail(422,`Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     const at=Date.now();
     state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
     for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
@@ -232,7 +249,7 @@ export default {
         else s.songRatings[key]={...song,value:body.rating,at:Date.now()};
         if(Object.keys(s.songRatings).length>5000)throw fail(409,'Shared feedback is full. Ask the owner to archive it.');
       }));
-    } catch(error) { return reply({error:error.status?error.message:'Shared service is unavailable or its free allowance is exhausted. Existing picks remain saved.'},error.status||503); }
+    } catch(error) { return reply({error:error.status?error.message:'Shared service is unavailable or its free allowance is exhausted. Existing picks remain saved.',...(error.selectionStats?{selectionStats:error.selectionStats}:{})},error.status||503); }
   },
   async scheduled(event,env) { await query(env.DB,'DELETE FROM limits WHERE expires<?',Date.now()).run(); }
 };

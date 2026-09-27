@@ -11,7 +11,7 @@ One shared listening room, with no visitor sign-in. Everyone sees the same saved
 - Catalog queries use credits from those references. Results must match those credits; Deezer fallback resolves an exact artist ID before fetching tracks. Broad unrelated search hits are rejected.
 - Llama 3.2 3B compares real candidates with specific reference songs and recent individual feedback. It returns a fit score for each supplied candidate/reference pair. These estimates are not audio measurements or guaranteed similarity.
 - Every description names a validated reference song, says whether it was liked or in the playlist, and says that musical fit is a metadata-based estimate. Descriptions are built from verified reference data rather than model-written claims about instruments, tempo, or mood. There is no generic claim that every song matches the entire community.
-- Up to 12 accepted songs, at most two per credited artist, are saved. Fewer are allowed when matches are weak. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
+- Every successful new batch saves 12 accepted songs, at most two per credited artist. An incomplete attempt preserves the previous batch and reports the shortfall. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
 - Songs shown within 14 days, playlist-familiar songs and rated songs are excluded. The saved batch is split across two weeks, with all languages mixed.
 
 Playback stays on YouTube, SoundCloud or Bandcamp through search links. The comfort mixes are fixed curated lists, not live AI recommendations.
@@ -20,7 +20,7 @@ Playback stays on YouTube, SoundCloud or Bandcamp through search links. The comf
 
 Like, Not for us, Already know and Clear apply to individual songs. The latest visitor rating replaces the previous shared rating for that song; this is not voting. Feedback affects the next generation, not the currently saved batch. Browsers sync on focus or within 60 seconds while visible.
 
-Refresh is manual, with a 60-second cooldown and a room-wide limit of 30 attempts per UTC day. Provider allowances may limit usage earlier. Existing valid picks remain if generation fails. No invented songs or unrelated fallback tracks fill empty slots.
+Refresh is manual, with a 60-second cooldown and a room-wide limit of 30 attempts per UTC day. Provider allowances may limit usage earlier. Existing valid picks remain if generation fails. No invented songs or unrelated fallback tracks fill empty slots. Small selections trigger additional catalog searches using different taste sources, not just another AI call over the same songs. A refresh tries up to three pools (24 new candidates each), two AI calls per pool, 30 catalog HTTP requests total, and a 155-second generation budget. Provider failures or too few qualifying matches can still prevent completion.
 
 ## Setup and upgrading
 
