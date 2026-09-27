@@ -169,7 +169,7 @@ test('Rejection counts distinguish wrong references, low scores, fields, and lim
  const stats={};
  const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,id:4},{...p,score:120},{...p,score:50},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
  assert.equal(result.length,2);assert.equal(stats.returned,9);assert.equal(stats.accepted,2);
- assert(Object.values(stats.rejected).every(n=>n===1));
+ assert(Object.entries(stats.rejected).filter(([key])=>!['releaseLimit','referenceLimit'].includes(key)).every(([,n])=>n===1));
  const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
  const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
 });
@@ -208,7 +208,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'release-evidence-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'diverse-releases-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -360,7 +360,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'release-evidence-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'diverse-releases-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -480,4 +480,18 @@ test('Repeated album requests share catalog response safely',async()=>{
  const get=memoizedCatalogFetch(async()=>{calls++;return Response.json({tracks:[1,2]});});
  const responses=await Promise.all([get('https://api.deezer.com/album/1'),get('https://api.deezer.com/album/1')]);
  assert.deepEqual(await responses[0].json(),{tracks:[1,2]});assert.deepEqual(await responses[1].json(),{tracks:[1,2]});assert.equal(calls,1);
+});
+
+test('Release cap holds across artists, reference songs, providers and separate AI passes',()=>{
+ const refs=Array.from({length:4},(_,i)=>({id:i+1,artist:'Reference Artist '+i,title:'Reference '+i,source:'liked song'}));
+ const candidates=refs.map((a,i)=>({id:100+i,artist:'Different Artist '+i,title:'Song '+i,anchorIds:[a.id],evidence:{type:'same_release',provider:i<2?'Deezer':'Apple',candidateId:100+i,album:{id:i<2?1:99,title:'One Collection'},reference:{id:i+1,artist:a.artist,title:a.title}}}));
+ const first=parseRelevantPicks('{"picks":[{"id":1,"score":90},{"id":2,"score":80}]}',candidates,refs);
+ const stats={};const second=parseRelevantPicks('{"picks":[{"id":3,"score":99},{"id":4,"score":99}]}',candidates,refs,first,stats);
+ assert.equal(second.length,2);assert.equal(stats.rejected.releaseLimit,2);
+});
+test('Reference-song cap holds across different releases and artist credits',()=>{
+ const a={id:1,artist:'Reference Artist',title:'Reference Song',source:'liked song'};
+ const candidates=Array.from({length:4},(_,i)=>({id:100+i,artist:'Artist '+i,title:'Song '+i,anchorIds:[1],evidence:{type:'same_release',provider:'Deezer',candidateId:100+i,album:{id:i+1,title:'Release '+i},reference:{id:1,artist:a.artist,title:a.title}}}));
+ const stats={};const out=parseRelevantPicks(JSON.stringify({picks:candidates.map((t,i)=>({id:i+1,score:80}))}),candidates,[a],[],stats);
+ assert.equal(out.length,2);assert.equal(stats.rejected.referenceLimit,2);
 });

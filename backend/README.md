@@ -1,6 +1,6 @@
 # Current discovery design: release-evidence-1
 
-The Worker resolves a specific taste song by title and artist in Deezer (Apple fallback), fetches its release by catalog ID, and requires the reference recording to be present in the returned track list. Candidates must be other valid recordings on that release. Deezer compilations are skipped. Other performers are allowed, so this is a reference-song relationship rather than an artist-only search. Familiar, rated and recent songs remain excluded; at most two per credited artist are selected.
+The Worker resolves a specific taste song by title and artist in Deezer (Apple fallback), fetches its release by catalog ID, and requires the reference recording to be present in the returned track list. Candidates must be other valid recordings on that release. Deezer compilations are skipped. Other performers are allowed, so this is a reference-song relationship rather than an artist-only search. Familiar, rated and recent songs remain excluded; at most two per credited artist, release and reference song are selected.
 
 Catalog metadata includes release title, available genre and date. AI ranks this supplied evidence using song feedback; it does not guess unknown songs’ sound. The former 70/100 self-confidence gate no longer applies to verified release candidates. Every selection must still be returned by AI as a valid ID with a finite priority score; catalog-only filler is not substituted. Invalid evidence fails validation. Descriptions are constructed from catalog data and say that a shared release does not guarantee similar sound.
 
@@ -132,3 +132,7 @@ Live diagnostics showed FP8 structured mode failing with 5025 while its plain re
 ### Score coverage diagnostics (score-coverage-12-1)
 
 When every candidate has a valid score, generation advances to a fresh pool instead of asking the model to rescore rejected songs. Retry instructions list only IDs not yet scored. Each attempt reports scoredIds and scoreDistribution (numeric score → count); this reveals scale mismatches and actual scores without exposing song names or raw model output. The 70/100 cutoff is unchanged. These are model estimates, not calibrated probabilities or verified audio similarity. This change saves redundant calls and improves diagnosis; it does not establish that the available catalog candidates are relevant enough to complete a batch.
+
+### Diversity limits (diverse-releases-1)
+
+A complete 12-song batch has at most two picks per artist, per release and per reference song. Limits apply across AI passes, pools and resumed drafts. Release identity checks both provider-specific IDs and normalized release titles so switching catalog providers cannot admit the same collection again; this conservatively also caps unrelated releases sharing a title. Diagnostics report `releaseLimit` and `referenceLimit` rejections. Previously saved batches remain visible; unfinished drafts from earlier builds are rebuilt under the new rules. Filling the batch requires at least six distinct reference songs and releases, so additional refreshes may be needed.

@@ -3,7 +3,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'release-evidence-1';
+export const RECOMMENDER_BUILD = 'diverse-releases-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
