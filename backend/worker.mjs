@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'full-pool-scores-12-1';
+export const RECOMMENDER_BUILD = 'score-coverage-12-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -228,7 +228,7 @@ async function refresh(env) {
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
       const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
       messages.push({role:'user',content:`Score all ${candidates.length} candidates, one entry for every ID: ${candidates.map((_,i)=>i+1).join(',')}. Do not stop after one good match. Return low scores for poor or unknown matches. The server selects qualifying songs and enforces the batch size and artist limits. No IDs outside this list.`});
-      let structured=false;
+      let structured=false;const evaluatedIds=new Set();
       for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
         let timer,response;
         const stats={pool:pool+1,returned:0,accepted:0,structured};selectionStats.attempts.push(stats);
@@ -249,8 +249,11 @@ async function refresh(env) {
         const replyText=aiReplyText(response);
         try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12);}
         catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
+        for(const id of stats.scoredIds||[])evaluatedIds.add(id);
+        const remainingIds=candidates.flatMap((_,i)=>evaluatedIds.has(i+1)?[]:[i+1]);
+        if(!remainingIds.length){poolStats.fullyScored=true;break;}
         const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
-        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${candidates.flatMap((_,i)=>selectedIds.includes(i+1)?[]:[i+1]).join(',')}. Include low scores for weak matches. JSON only: a picks array of id and score objects. Never invent IDs. Do not stop after the first match.`});
+        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${remainingIds.join(',')}. Include low scores for weak matches. JSON only: a picks array of id and score objects. Never invent IDs. Do not stop after the first match.`});
       }
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;

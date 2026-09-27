@@ -202,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'full-pool-scores-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'score-coverage-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -416,4 +416,15 @@ test('Failing catalog host is paused without blocking the other catalog or spend
  for(let i=0;i<3;i++)await get('https://itunes.apple.com/search?term=fixture');
  await assert.rejects(get('https://itunes.apple.com/search?term=another'),/provider paused/);assert.equal(calls,3);
  assert.equal((await get('https://api.deezer.com/search/artist?q=fixture')).status,200);assert.equal(stats.catalogRequests,4);
+});
+
+test('All valid low scores advance to fresh pools without rescoring rejected songs',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>{calls++;const p=JSON.parse(input.messages[1].content);return {response:{picks:p.candidates.map(t=>({id:t.id,score:40}))}};};
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.selectionStats.attempts.length,r.selectionStats.pools.filter(p=>p.candidates>0).length);
+ assert.equal(calls,r.selectionStats.attempts.length);for(const a of r.selectionStats.attempts){assert.equal(a.scoreDistribution['40'],a.returned);assert.equal(a.rejected.lowScore,a.returned);}s.sqlite.close();
+});
+test('Diagnostics expose actual numeric scores without changing their scale or accepting weak songs',()=>{
+ const anchors=[{id:1,artist:'Fixture',title:'Reference',source:'liked song'}],candidates=[{artist:'Fixture',title:'Candidate',anchorIds:[1]}],stats={};
+ assert.throws(()=>parseRelevantPicks('{"picks":[{"id":1,"score":0.8}]}',candidates,anchors,[],stats));
+ assert.deepEqual(stats.scoreDistribution,{'0.8':1});assert.equal(stats.rejected.lowScore,1);assert.deepEqual(stats.scoredIds,[1]);
 });

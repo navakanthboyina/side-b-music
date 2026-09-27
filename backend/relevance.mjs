@@ -27,7 +27,7 @@ export function relevanceMessages(candidates,anchors,feedback) {
 }
 export function parseRelevantPicks(text,candidates,anchors,existing=[],stats={},target=12) {
  stats.rejected={invalidObject:0,invalidId:0,invalidReference:0,invalidScore:0,lowScore:0,duplicate:0,artistLimit:0};
- stats.accepted=0;
+ stats.accepted=0;stats.scoredIds=[];stats.scoreDistribution={};
  let data;try{const clean=text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{data=JSON.parse(clean);}catch{const start=clean.indexOf('{'),end=clean.lastIndexOf('}');if(start<0||end<start)throw Error();data=JSON.parse(clean.slice(start,end+1));}}catch{stats.formatError='invalid_json';throw Error('AI reply was not valid JSON');}
  if(!Array.isArray(data.picks)){stats.formatError='missing_picks_array';throw Error('AI reply needs a picks array with candidate IDs and fit scores');}
  stats.returned=data.picks.length;
@@ -43,6 +43,7 @@ export function parseRelevantPicks(text,candidates,anchors,existing=[],stats={},
   if(!a){reject('invalidReference');continue;}
   // Only id and score are model-owned. Reference and description always come from the input pair.
   if(typeof p.score!=='number'||!Number.isFinite(p.score)||p.score<0||p.score>100){reject('invalidScore');continue;}
+  if(!stats.scoredIds.includes(p.id)){stats.scoredIds.push(p.id);stats.scoreDistribution[p.score]=(stats.scoreDistribution[p.score]||0)+1;}
   if(p.score<70){reject('lowScore');continue;}
   if(seen.has(songKey(t))){reject('duplicate');continue;}
   const artist=norm(t.artist);if((artists.get(artist)||0)>=2){reject('artistLimit');continue;}
