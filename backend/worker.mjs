@@ -186,7 +186,7 @@ async function refresh(env) {
       if(picks.length>=12)break;
       const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
       messages.push({role:'user',content:
-        `Last pass validation counts: ${JSON.stringify(stats)}. Fix any formatting or reference errors using the original candidate data. Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"anchorId":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only valid candidate IDs and their allowed anchorIds. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
+        `Last pass validation counts: ${JSON.stringify(stats)}. Fix any formatting or reference errors using the original candidate data. Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only valid candidate IDs. Compare each to its embedded reference song; do not return anchorId. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
     }
     const at=Date.now();
     state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};

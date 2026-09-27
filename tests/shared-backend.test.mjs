@@ -10,7 +10,7 @@ function selection(input){
  const p=JSON.parse(input.messages[1].content),counts=new Map();
  return {picks:p.candidates.flatMap(t=>{
   const count=counts.get(t.artist)||0;counts.set(t.artist,count+1);
-  return count<2?[{id:t.id,anchorId:t.anchorIds[0],score:85,reason:'A likely match for the gentle melodic phrasing of the reference song.'}]:[];
+  return count<2?[{id:t.id,score:85,reason:'A likely match for the gentle melodic phrasing of the reference song.'}]:[];
  }).slice(0,12)};
 }
 function setup(){
@@ -76,7 +76,7 @@ test('Liked songs lead taste; skipped and known songs do not become positive anc
 test('Prompt carries representative song taste and individual negative feedback',async()=>{
  const s=setup();await s.call('/feedback',{...fixture,rating:'skip'});
  s.env.AI.run=async(model,input)=>{
-  const p=JSON.parse(input.messages[1].content);assert(p.anchors.some(t=>t.title.startsWith('Anchor Song')));
+  const p=JSON.parse(input.messages[1].content);assert(p.candidates.some(t=>t.reference.title.startsWith('Anchor Song')));
   assert(p.feedback.some(t=>t.title===fixture.title&&t.rating==='skip'));
   return {response:selection(input)};
  };
@@ -166,4 +166,33 @@ test('Rejection counts distinguish wrong references, low scores, fields, and lim
  assert(Object.values(stats.rejected).every(n=>n===1));
  const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
  const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
+});
+
+test('Each candidate embeds its own reference; AI does not join two ID lists',async()=>{
+ const s=setup();
+ s.env.AI.run=async(model,input)=>{
+  const payload=JSON.parse(input.messages[1].content);
+  assert.equal(payload.anchors,undefined);
+  const uniqueReferences=new Set();
+  for(const candidate of payload.candidates){
+   assert.equal(candidate.anchorIds,undefined);assert(candidate.reference.title.startsWith('Anchor Song'));
+   assert.equal(candidate.reference.artist,candidate.artist);uniqueReferences.add(candidate.reference.title);
+  }
+  assert(uniqueReferences.size>=6);
+  return {response:selection(input)};
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);
+ assert.equal(batch.selectionStats.attempts[0].rejected.referenceMismatch,0);
+ for(const song of batch.items){const index=song.artist.replace('Fixture Artist ','');assert(song.reason.includes('Anchor Song '+index));}
+ s.sqlite.close();
+});
+test('Assigned reference is stable and missing or conflicting references never get relabeled',()=>{
+ const anchors=[{id:5,artist:'First',title:'First reference',source:'playlist song'},{id:9,artist:'Second',title:'Second reference',source:'liked song'}];
+ const candidates=[{artist:'Second',title:'Candidate',anchorIds:[9,5]}];
+ const pick={id:1,score:90,reason:'Likely similar upbeat percussion and layered melodic phrasing.'};
+ const result=parseRelevantPicks(JSON.stringify({picks:[pick]}),candidates,anchors);
+ assert.match(result[0].reason,/Second reference/);assert(!result[0].reason.includes('First reference'));
+ assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{...pick,anchorId:5}]}),candidates,anchors));
+ assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[pick]}),[{...candidates[0],anchorIds:[99]}],anchors));
 });
