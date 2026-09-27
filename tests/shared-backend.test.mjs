@@ -202,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'active-model-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'full-pool-scores-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -329,12 +329,12 @@ test('Four-candidate schema cannot request fabricated IDs or 24 picks',()=>{
  assert.equal(f.json_schema.properties.picks.maxItems,4);
  assert.deepEqual(f.json_schema.required,['picks']);assert.throws(()=>selectionFormat(0));
 });
-test('Malformed first reply retries with constrained schema and completes twelve',async()=>{
+test('Malformed first plain reply retries and completes twelve',async()=>{
  const s=setup();let calls=0;
  s.env.AI.run=async(model,input)=>{
   assert.equal(model,'@cf/meta/llama-3.1-8b-instruct-fp8');
   const candidates=JSON.parse(input.messages[1].content).candidates;
-  assert.deepEqual(input.response_format,selectionFormat(candidates.length));
+  assert.equal(input.response_format,undefined);
   if(++calls===1)return {response:'{"picks":['};
   return {response:selection(input)};
  };
@@ -365,9 +365,9 @@ test('Provider failures expose safe categories, never raw prompts or secrets',()
  assert(!JSON.stringify(inferenceFailure(Error('secret song title'))).includes('secret'));
  assert.equal(inferenceFailure(Error('AI timed out')).category,'timeout');
 });
-test('Explicit schema failure retries without schema while retaining validation',async()=>{
+test('Provider format exception retries without schema while retaining validation',async()=>{
  const s=setup();let calls=0;
- s.env.AI.run=async(model,input)=>{if(++calls===1){assert(input.response_format);throw Error('Failed to initialize grammar matcher');}assert.equal(input.response_format,undefined);return {response:selection(input)};};
+ s.env.AI.run=async(model,input)=>{if(++calls===1){assert.equal(input.response_format,undefined);throw Error('Failed to initialize grammar matcher');}assert.equal(input.response_format,undefined);return {response:selection(input)};};
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);assert.equal(r.batch.selectionStats.attempts[0].inference.category,'response_format');s.sqlite.close();
 });
 test('Quota stops further AI/catalog work and reports quota instead of no matches',async()=>{
@@ -384,7 +384,7 @@ test('Leading Cloudflare codes and string errors are classified',()=>{
  assert.equal(inferenceFailure('3036: allocation exhausted').category,'quota');
  assert.equal(inferenceFailure(Error('5007: No such model')).code,5007);
 });
-test('Unknown structured failure gets one unstructured retry with song validation',async()=>{
+test('Unknown failure gets one plain retry with song validation',async()=>{
  const s=setup();let calls=0;s.env.AI.run=async(model,input)=>{if(++calls===1)throw Error('unclassified provider error');assert.equal(input.response_format,undefined);return {response:selection(input)};};
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);s.sqlite.close();
 });
@@ -399,4 +399,21 @@ test('Reported 5028 deprecation stops immediately with an actionable message',as
  const s=setup();let calls=0;
  s.env.AI.run=async()=>{calls++;throw Error('5028: @cf/meta/infire-llama-3.1-8b-instruct was deprecated on 2026-05-30.');};
  const response=await s.call('/refresh',{});assert.equal(response.status,503);const r=await response.json();assert.equal(r.selectionStats.attempts[0].inference.code,5028);assert.match(r.error,/retired/);assert.equal(calls,1);s.sqlite.close();
+});
+
+test('Generation starts in the live-working plain mode and asks for all pool scores',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>{
+  calls++;assert.equal(input.response_format,undefined);
+  assert.match(input.messages[0].content,/Score EVERY candidate/);
+  assert.match(input.messages[2].content,/Score all 24 candidates/);
+  const p=selection(input);if(calls===1)return {response:{picks:p.picks.slice(0,1)}};
+  assert.match(input.messages.at(-1).content,/every remaining ID/);return {response:p};
+ };
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);assert.equal(r.batch.selectionStats.attempts[0].structured,false);s.sqlite.close();
+});
+test('Failing catalog host is paused without blocking the other catalog or spending requests',async()=>{
+ let calls=0;const stats={catalogRequests:0};const get=budgetedCatalogFetch(async url=>{calls++;return new URL(url).hostname==='itunes.apple.com'?new Response('',{status:503}):Response.json({data:[]});},stats,Date.now()+60000);
+ for(let i=0;i<3;i++)await get('https://itunes.apple.com/search?term=fixture');
+ await assert.rejects(get('https://itunes.apple.com/search?term=another'),/provider paused/);assert.equal(calls,3);
+ assert.equal((await get('https://api.deezer.com/search/artist?q=fixture')).status,200);assert.equal(stats.catalogRequests,4);
 });

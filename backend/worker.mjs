@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'active-model-12-1';
+export const RECOMMENDER_BUILD = 'full-pool-scores-12-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -153,15 +153,20 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
   };
 }
 export function budgetedCatalogFetch(fetcher,stats,deadline) {
-  const hosts=new Set(['itunes.apple.com','api.deezer.com']);
+  const hosts=new Set(['itunes.apple.com','api.deezer.com']),failures=new Map();
   const problem=code=>Object.assign(new Error(code),{catalogCode:code});
   return async(input,options={})=>{
     let url=new URL(input);
     for(let hop=0;hop<=2;hop++) {
       if(url.protocol!=='https:'||!hosts.has(url.hostname)||url.username||url.password)throw problem('unsupported redirect destination');
+      if((failures.get(url.hostname)||0)>=3)throw problem('provider paused after repeated failures');
       if(stats.catalogRequests>=30||Date.now()>=deadline)throw problem('request budget exhausted');
       stats.catalogRequests++;
-      const response=await fetcher(url.toString(),{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'manual'});
+      let response;
+      try {response=await fetcher(url.toString(),{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'manual'});}
+      catch(error){failures.set(url.hostname,(failures.get(url.hostname)||0)+1);throw error;}
+      if(response.status>=400){failures.set(url.hostname,(failures.get(url.hostname)||0)+1);stats.providerFailures={...(stats.providerFailures||{}),[url.hostname]:failures.get(url.hostname)};}
+
       if(![301,302,303,307,308].includes(response.status))return response;
       const location=response.headers.get('location');
       await response.body?.cancel();
@@ -222,8 +227,8 @@ async function refresh(env) {
       candidates.forEach(t=>examined.add(songKey(t)));
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
       const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
-      messages.push({role:'user',content:`There are already ${picks.length} accepted songs from earlier pools. This pool contains exactly ${candidates.length} candidates. Valid IDs are ${candidates.map((_,i)=>i+1).join(",")}. Select no more than ${Math.min(candidates.length,12-picks.length)} of these candidates. Never fill missing slots with IDs outside this pool. Already accepted artist counts: ${JSON.stringify(picks.reduce((counts,t)=>{counts[t.artist]=(counts[t.artist]||0)+1;return counts;},{}))}. Keep a maximum of two per artist across the complete batch.`});
-      let structured=true;
+      messages.push({role:'user',content:`Score all ${candidates.length} candidates, one entry for every ID: ${candidates.map((_,i)=>i+1).join(',')}. Do not stop after one good match. Return low scores for poor or unknown matches. The server selects qualifying songs and enforces the batch size and artist limits. No IDs outside this list.`});
+      let structured=false;
       for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
         let timer,response;
         const stats={pool:pool+1,returned:0,accepted:0,structured};selectionStats.attempts.push(stats);
@@ -245,7 +250,7 @@ async function refresh(env) {
         try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12);}
         catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
         const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
-        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs from this pool: ${JSON.stringify(selectedIds)}. Return up to ${Math.min(candidates.length,12-picks.length)} additional supported selections as {"picks":[{"id":1,"score":80}]}. Compare each candidate to its embedded reference. Keep the same fit threshold and total two-per-artist limit. Do not repeat accepted songs.`});
+        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${candidates.flatMap((_,i)=>selectedIds.includes(i+1)?[]:[i+1]).join(',')}. Include low scores for weak matches. JSON only: a picks array of id and score objects. Never invent IDs. Do not stop after the first match.`});
       }
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;
