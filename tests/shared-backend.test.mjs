@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
-import worker,{aiReplyText,aiFailureDiagnostic,budgetedCatalogFetch} from '../backend/worker.mjs';
+import worker,{aiReplyText,aiFailureDiagnostic,budgetedCatalogFetch,inferenceFailure} from '../backend/worker.mjs';
 import {songKey} from '../ai-core.mjs';
 import {tasteAnchors,matchesArtist,credits,parseRelevantPicks,selectionFormat} from '../backend/relevance.mjs';
 import starter from '../backend/starter.mjs';
@@ -202,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'bounded-selection-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'inference-errors-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -357,4 +357,24 @@ test('An older draft above the reduced target commits only twelve and performs n
  row.pending={at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
+});
+
+test('Provider failures expose safe categories, never raw prompts or secrets',()=>{
+ assert.equal(inferenceFailure(Error('Quota exceeded secret song title')).category,'quota');
+ assert.equal(inferenceFailure(Error('Failed to initialize grammar matcher')).category,'response_format');
+ assert(!JSON.stringify(inferenceFailure(Error('secret song title'))).includes('secret'));
+ assert.equal(inferenceFailure(Error('AI timed out')).category,'timeout');
+});
+test('Explicit schema failure retries without schema while retaining validation',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>{if(++calls===1){assert(input.response_format);throw Error('Failed to initialize grammar matcher');}assert.equal(input.response_format,undefined);return {response:selection(input)};};
+ const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);assert.equal(r.batch.selectionStats.attempts[0].inference.category,'response_format');s.sqlite.close();
+});
+test('Quota stops further AI/catalog work and reports quota instead of no matches',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async()=>{calls++;throw Error('Daily neurons quota exceeded');};
+ const response=await s.call('/refresh',{});assert.equal(response.status,503);const r=await response.json();assert.match(r.error,/allowance/);assert.equal(calls,1);assert.equal(r.selectionStats.pools.length,1);assert.equal((await s.state()).refreshing,false);s.sqlite.close();
+});
+test('All inference failures report service failure, not no matching taste',async()=>{
+ const s=setup();s.env.AI.run=async()=>{throw Error('unclassified provider failure');};
+ const response=await s.call('/refresh',{});assert.equal(response.status,503);const r=await response.json();assert.match(r.error,/No AI selections were returned/);assert.equal(r.selectionStats.attempts[0].inference.category,'provider_error');s.sqlite.close();
 });

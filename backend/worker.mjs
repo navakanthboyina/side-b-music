@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'bounded-selection-12-1';
+export const RECOMMENDER_BUILD = 'inference-errors-12-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -171,6 +171,19 @@ export function budgetedCatalogFetch(fetcher,stats,deadline) {
     }
   };
 }
+export function inferenceFailure(error) {
+  // Classify locally; never return provider messages, which may echo prompt data.
+  const message=String(error?.message||''), code=String(error?.code||'');
+  const numericCode=/^\d{3,6}$/.test(code)?Number(code):Number(message.match(/(?:error|code)\s*[:=]?\s*(\d{3,6})\b/i)?.[1])||null;
+  let category='provider_error',detail='Cloudflare AI could not complete the request.';
+  if(/quota|neurons|daily.*limit|allowance/i.test(message)){category='quota';detail='Cloudflare AI allowance is exhausted.';}
+  else if(/rate.?limit|too many requests|\b429\b/i.test(message)){category='rate_limit';detail='Cloudflare AI is rate limiting requests.';}
+  else if(/unauthorized|forbidden|not authorized|permission|\b401\b|\b403\b/i.test(message)){category='access';detail='Cloudflare denied access to the AI model.';}
+  else if(/grammar|json.?schema|response.format|JSON Mode/i.test(message)){category='response_format';detail='Cloudflare could not generate the requested structured response.';}
+  else if(/timed? ?out|timeout/i.test(message)){category='timeout';detail='Cloudflare AI timed out.';}
+  else if(/model.*not found|unknown model|model.*not available/i.test(message)){category='model_unavailable';detail='The selected AI model is unavailable.';}
+  return {category,detail,...(numericCode?{code:numericCode}:{})};
+}
 async function refresh(env) {
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
@@ -208,15 +221,24 @@ async function refresh(env) {
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
       const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
       messages.push({role:'user',content:`There are already ${picks.length} accepted songs from earlier pools. This pool contains exactly ${candidates.length} candidates. Valid IDs are ${candidates.map((_,i)=>i+1).join(",")}. Select no more than ${Math.min(candidates.length,12-picks.length)} of these candidates. Never fill missing slots with IDs outside this pool. Already accepted artist counts: ${JSON.stringify(picks.reduce((counts,t)=>{counts[t.artist]=(counts[t.artist]||0)+1;return counts;},{}))}. Keep a maximum of two per artist across the complete batch.`});
+      let structured=true;
       for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
         let timer,response;
-        const stats={pool:pool+1,returned:0,accepted:0};selectionStats.attempts.push(stats);
+        const stats={pool:pool+1,returned:0,accepted:0,structured};selectionStats.attempts.push(stats);
         try {
           response=await Promise.race([
-            env.AI.run(MODEL,{messages,max_tokens:1200,temperature:0, response_format:selectionFormat(candidates.length)}),
+            env.AI.run(MODEL,{messages,max_tokens:1200,temperature:0, ...(structured?{response_format:selectionFormat(candidates.length)}:{})}),
             new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('AI timed out')),Math.max(1,Math.min(35000,deadline-Date.now())));})
           ]).finally(()=>clearTimeout(timer));
-        } catch {stats.error='inference failed';continue;}
+        } catch(error) {
+          stats.error='inference failed';stats.inference=inferenceFailure(error);
+          console.warn(JSON.stringify({event:'munna-inference-error',model:MODEL,...stats.inference}));
+          if(['quota','rate_limit','access','model_unavailable'].includes(stats.inference.category))throw Object.assign(fail(503,stats.inference.detail+' Previous picks remain saved.'),{selectionStats});
+          // Retry without grammar constraints only when the provider explicitly rejects them.
+          // IDs, scores, references and artist limits still pass the same validator.
+          if(stats.inference.category==='response_format')structured=false;
+          continue;
+        }
         const replyText=aiReplyText(response);
         try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12);}
         catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
@@ -226,6 +248,7 @@ async function refresh(env) {
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;
     }
+    if(!picks.length&&selectionStats.attempts.length&&selectionStats.attempts.every(a=>a.error==='inference failed'))throw Object.assign(fail(503,selectionStats.attempts.at(-1).inference.detail+' No AI selections were returned. Previous picks remain saved.'),{selectionStats});
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     const at=Date.now();
     const complete=picks.length===12;
