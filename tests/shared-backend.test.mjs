@@ -202,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'ai-probe-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'active-model-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -332,7 +332,7 @@ test('Four-candidate schema cannot request fabricated IDs or 24 picks',()=>{
 test('Malformed first reply retries with constrained schema and completes twelve',async()=>{
  const s=setup();let calls=0;
  s.env.AI.run=async(model,input)=>{
-  assert.equal(model,'@cf/meta/llama-3.1-8b-instruct');
+  assert.equal(model,'@cf/meta/llama-3.1-8b-instruct-fp8');
   const candidates=JSON.parse(input.messages[1].content).candidates;
   assert.deepEqual(input.response_format,selectionFormat(candidates.length));
   if(++calls===1)return {response:'{"picks":['};
@@ -393,4 +393,10 @@ test('Owner probe needs authentication, uses no taste data, reports original syn
  let calls=0;s.env.AI.run=async(model,input)=>{calls++;assert(!JSON.stringify(input).includes('Anchor Song'));if(input.response_format)throw Error('fixture upstream failure');return {response:{picks:[{id:1,score:80}]}};};
  const r=await (await s.call('/admin/ai-check',{}, {authorization:'Bearer test-owner-secret'})).json();assert.equal(calls,2);assert.equal(r.checks[0].ok,true);assert.equal(r.checks[1].message,'fixture upstream failure');assert.equal((await s.state()).batch,null);
  assert.equal((await s.call('/admin/ai-check',{}, {authorization:'Bearer test-owner-secret'})).status,429);s.sqlite.close();
+});
+
+test('Reported 5028 deprecation stops immediately with an actionable message',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async()=>{calls++;throw Error('5028: @cf/meta/infire-llama-3.1-8b-instruct was deprecated on 2026-05-30.');};
+ const response=await s.call('/refresh',{});assert.equal(response.status,503);const r=await response.json();assert.equal(r.selectionStats.attempts[0].inference.code,5028);assert.match(r.error,/retired/);assert.equal(calls,1);s.sqlite.close();
 });

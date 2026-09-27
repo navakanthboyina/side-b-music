@@ -105,6 +105,10 @@ Schema documentation: https://developers.cloudflare.com/workers-ai/features/json
 
 AI exceptions are classified as quota, rate limit, access, unavailable model, timeout, response format or unknown provider error. Public diagnostics contain only this category, a fixed description and an optional numeric code; raw exception text is never published because providers can echo input. All failed inference attempts produce a service error, not a claim that taste matches were absent. Quota/access failures stop further work immediately. If the provider explicitly rejects JSON mode or its grammar, the second attempt omits response_format; the same candidate ID, score, reference, duplicate and artist validators still run. There is no fallback to unvalidated or non-AI songs. The target remains 12 songs, six per week.
 
-### Isolating live inference errors (ai-probe-12-1)
+### Isolating live inference errors (active-model-12-1)
 
 Leading numeric Workers AI error codes and string exceptions are recognized. Unclassified provider failures receive one retry without response_format, with all application validators retained. This does not assert the schema is the cause. To identify the actual upstream failure, owner-authenticated POST `/admin/ai-check` runs at most two fixed synthetic requests (plain then structured), returning their original errors to the owner only. It does not read playlist data, search the catalog, or change the room. It uses AI allowance and is limited to once per minute. Stop-class errors end the check immediately. Run `node check-ai.mjs <worker-url>` with MUNNA_ADMIN_TOKEN set to the saved owner password. Never commit that token.
+
+### Retired model replacement (active-model-12-1)
+
+The deployed service returned 5028 for the old `@cf/meta/llama-3.1-8b-instruct` alias, reporting retirement on 2026-05-30. The active selection and owner probe now use `@cf/meta/llama-3.1-8b-instruct-fp8`, listed in the current catalog: https://developers.cloudflare.com/workers-ai/models/llama-3.1-8b-instruct-fp8/ . Code 5028 stops immediately and tells the owner the model was retired. This corrects the model choice in earlier notes. Local tests do not establish account-specific live availability; use the owner probe after deploying to check it.

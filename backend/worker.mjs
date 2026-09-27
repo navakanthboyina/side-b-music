@@ -2,8 +2,8 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'ai-probe-12-1';
-export const MODEL = '@cf/meta/llama-3.1-8b-instruct';
+export const RECOMMENDER_BUILD = 'active-model-12-1';
+export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -175,7 +175,7 @@ export function inferenceFailure(error) {
   // Classify locally; never return provider messages, which may echo prompt data.
   const message=typeof error==='string'?error:String(error?.message||error?.cause?.message||''), code=String(error?.code||error?.cause?.code||'');
   const numericCode=/^\d{3,6}$/.test(code)?Number(code):Number(message.match(/(?:^|error[ :]*|code[ :=]*)(\d{3,6})\b/i)?.[1])||null;
-  const known={5007:['model_unavailable','The selected AI model was not found.'],3042:['model_unavailable','The model ID is invalid.'],5035:['access','This AI model requires a paid Workers plan.'],5018:['access','This account cannot access the AI model.'],3041:['access','This account cannot access the AI model.'],5016:['access','The model terms must be accepted.'],3023:['access','AI is unavailable for this account.'],3036:['quota','Cloudflare AI allowance is exhausted.'],3040:['rate_limit','Cloudflare AI is temporarily out of capacity.'],3007:['timeout','Cloudflare AI timed out.'],3006:['request_invalid','The AI request is too large.']};
+  const known={5028:['model_unavailable','The configured AI model has been retired. The owner must update it.'],5007:['model_unavailable','The selected AI model was not found.'],3042:['model_unavailable','The model ID is invalid.'],5035:['access','This AI model requires a paid Workers plan.'],5018:['access','This account cannot access the AI model.'],3041:['access','This account cannot access the AI model.'],5016:['access','The model terms must be accepted.'],3023:['access','AI is unavailable for this account.'],3036:['quota','Cloudflare AI allowance is exhausted.'],3040:['rate_limit','Cloudflare AI is temporarily out of capacity.'],3007:['timeout','Cloudflare AI timed out.'],3006:['request_invalid','The AI request is too large.']};
   if(known[numericCode])return {category:known[numericCode][0],detail:known[numericCode][1],code:numericCode};
   let category='provider_error',detail='Cloudflare AI could not complete the request.';
   if(/quota|neurons|daily.*limit|allowance/i.test(message)){category='quota';detail='Cloudflare AI allowance is exhausted.';}
@@ -183,7 +183,7 @@ export function inferenceFailure(error) {
   else if(/unauthorized|forbidden|not authorized|permission|\b401\b|\b403\b/i.test(message)){category='access';detail='Cloudflare denied access to the AI model.';}
   else if(/grammar|json.?schema|response.format|JSON Mode/i.test(message)){category='response_format';detail='Cloudflare could not generate the requested structured response.';}
   else if(/timed? ?out|timeout/i.test(message)){category='timeout';detail='Cloudflare AI timed out.';}
-  else if(/model.*not found|unknown model|model.*not available/i.test(message)){category='model_unavailable';detail='The selected AI model is unavailable.';}
+  else if(/deprecated|retired|model.*not found|unknown model|model.*not available/i.test(message)){category='model_unavailable';detail='The selected AI model is unavailable.';}
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
 async function refresh(env) {
