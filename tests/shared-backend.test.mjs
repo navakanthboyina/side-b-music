@@ -87,8 +87,8 @@ test('Descriptions cite validated source and mark similarity as estimate; weak o
  const candidates=[{artist:'Anchor Artist',title:'New Track',anchorIds:[1]}];
  const good={id:1,anchorId:1,score:80,reason:'Likely similar gentle phrasing and acoustic arrangements.'};
  const out=parseRelevantPicks(JSON.stringify({picks:[good]}),candidates,anchors);
- assert.match(out[0].reason,/Real Reference/);assert.match(out[0].reason,/liked song/);assert.match(out[0].reason,/AI-estimated fit/);
- for(const change of [{anchorId:99},{id:99},{score:40},{reason:''}])assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{...good,...change}]}),candidates,anchors));
+ assert.match(out[0].reason,/Real Reference/);assert.match(out[0].reason,/liked song/);assert.match(out[0].reason,/metadata-based estimate/);
+ for(const change of [{id:99},{score:40}])assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{...good,...change}]}),candidates,anchors));
  assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors));
 });
 test('Low-confidence model response preserves current batch and releases lease',async()=>{
@@ -158,11 +158,11 @@ test('Expansion cannot exceed per-artist cap or admit low-confidence selections'
 
 test('Rejection counts distinguish wrong references, low scores, fields, and limits',()=>{
  const anchors=[{id:1,artist:'Reference',title:'Song',source:'playlist song'},{id:2,artist:'Other',title:'Other',source:'playlist song'}];
- const candidates=[{artist:'Performer',title:'A',anchorIds:[1]},{artist:'Performer',title:'B',anchorIds:[1]},{artist:'Performer',title:'C',anchorIds:[1]}];
+ const candidates=[{artist:'Performer',title:'A',anchorIds:[1]},{artist:'Performer',title:'B',anchorIds:[1]},{artist:'Performer',title:'C',anchorIds:[1]},{artist:'Performer',title:'No Reference',anchorIds:[99]}];
  const p={id:1,anchorId:1,score:80,reason:'Likely similar melodic phrasing and acoustic arrangement.'};
  const stats={};
- const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,anchorId:99},{...p,anchorId:2},{...p,score:120},{...p,score:50},{...p,reason:'short'},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
- assert.equal(result.length,2);assert.equal(stats.returned,11);assert.equal(stats.accepted,2);
+ const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,id:4},{...p,score:120},{...p,score:50},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
+ assert.equal(result.length,2);assert.equal(stats.returned,9);assert.equal(stats.accepted,2);
  assert(Object.values(stats.rejected).every(n=>n===1));
  const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
  const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
@@ -183,16 +183,29 @@ test('Each candidate embeds its own reference; AI does not join two ID lists',as
  };
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
  const batch=(await response.json()).batch;assert.equal(batch.items.length,12);
- assert.equal(batch.selectionStats.attempts[0].rejected.referenceMismatch,0);
+ assert.equal(batch.selectionStats.attempts[0].rejected.invalidReference,0);
  for(const song of batch.items){const index=song.artist.replace('Fixture Artist ','');assert(song.reason.includes('Anchor Song '+index));}
  s.sqlite.close();
 });
-test('Assigned reference is stable and missing or conflicting references never get relabeled',()=>{
+test('Assigned reference is authoritative; extra model fields cannot alter displayed descriptions',()=>{
  const anchors=[{id:5,artist:'First',title:'First reference',source:'playlist song'},{id:9,artist:'Second',title:'Second reference',source:'liked song'}];
  const candidates=[{artist:'Second',title:'Candidate',anchorIds:[9,5]}];
  const pick={id:1,score:90,reason:'Likely similar upbeat percussion and layered melodic phrasing.'};
  const result=parseRelevantPicks(JSON.stringify({picks:[pick]}),candidates,anchors);
  assert.match(result[0].reason,/Second reference/);assert(!result[0].reason.includes('First reference'));
- assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{...pick,anchorId:5}]}),candidates,anchors));
+ const extra=parseRelevantPicks(JSON.stringify({picks:[{...pick,anchorId:5,reason:'Invented claim about the wrong reference'}]}),candidates,anchors);
+ assert.match(extra[0].reason,/Second reference/);assert(!extra[0].reason.includes('Invented claim'));assert(!extra[0].reason.includes('First reference'));
  assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[pick]}),[{...candidates[0],anchorIds:[99]}],anchors));
+});
+
+test('Repeated extraneous model anchor IDs no longer collapse a valid batch to one song',async()=>{
+ const s=setup();
+ s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'paired-scores-1');
+ for(const t of batch.items){
+  assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
+  assert(!t.reason.includes('Unsupported claim'));
+ }
+ s.sqlite.close();
 });

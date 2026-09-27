@@ -9,8 +9,8 @@ One shared listening room, with no visitor sign-in. Everyone sees the same saved
 - The owner imports playlist CSVs with `Artist Name(s),Track Name` or `Artist,Title` headers, maximum 2 MB each.
 - Up to 16 representative playlist songs and explicit liked songs provide song-level taste references. Likes take priority. Rated songs are excluded from new discoveries; skips are negative evidence, and Already know is exclusion only.
 - Catalog queries use credits from those references. Results must match those credits; Deezer fallback resolves an exact artist ID before fetching tracks. Broad unrelated search hits are rejected.
-- Llama 3.2 3B compares real candidates with specific reference songs and recent individual feedback. It returns a fit estimate and explanation for each pick. These estimates are not audio measurements or guaranteed similarity.
-- Every description names a validated reference song, says whether it was liked or in the playlist, and labels the musical comparison **AI-estimated fit**. There is no generic claim that every song matches the entire community.
+- Llama 3.2 3B compares real candidates with specific reference songs and recent individual feedback. It returns a fit score for each supplied candidate/reference pair. These estimates are not audio measurements or guaranteed similarity.
+- Every description names a validated reference song, says whether it was liked or in the playlist, and says that musical fit is a metadata-based estimate. Descriptions are built from verified reference data rather than model-written claims about instruments, tempo, or mood. There is no generic claim that every song matches the entire community.
 - Up to 12 accepted songs, at most two per credited artist, are saved. Fewer are allowed when matches are weak. The current candidate pool emphasizes artists and collaborators already represented in taste; new-artist discovery is limited.
 - Songs shown within 14 days, playlist-familiar songs and rated songs are excluded. The saved batch is split across two weeks, with all languages mixed.
 

@@ -2,6 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks } from './relevance.mjs';
 
+export const RECOMMENDER_BUILD = 'paired-scores-1';
 export const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -18,7 +19,7 @@ async function read(db) {
   return { ...row, state: JSON.parse(row.data) };
 }
 function publicState(row) {
-  return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
+  return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
 }
@@ -162,7 +163,7 @@ async function refresh(env) {
     const anchors=tasteAnchors(state);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
     const messages = relevanceMessages(candidates,anchors,feedback); let picks=[];
-    const selectionStats={candidateCount:candidates.length,attempts:[]};
+    const selectionStats={build:RECOMMENDER_BUILD,candidateCount:candidates.length,attempts:[]};
     for (let attempt=0;attempt<2;attempt++) {
       let timer, response;
       const stats={returned:0,accepted:0}; selectionStats.attempts.push(stats);
@@ -186,7 +187,7 @@ async function refresh(env) {
       if(picks.length>=12)break;
       const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
       messages.push({role:'user',content:
-        `Last pass validation counts: ${JSON.stringify(stats)}. Fix any formatting or reference errors using the original candidate data. Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only valid candidate IDs. Compare each to its embedded reference song; do not return anchorId. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
+        `Last pass validation counts: ${JSON.stringify(stats)}. Fix any formatting or reference errors using the original candidate data. Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"score":80}]}. Use only valid candidate IDs. Compare each to its embedded reference song; return only id and score, with no reference IDs or explanations. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
     }
     const at=Date.now();
     state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
