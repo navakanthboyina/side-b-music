@@ -126,3 +126,32 @@ test('Cloudflare object/text envelopes normalize; diagnostics do not log generat
  const d=aiFailureDiagnostic({response:'private generated reference'},{},12,0);
  assert(!JSON.stringify(d).includes('private generated reference'));assert(d.replyLength>0);
 });
+
+test('A one-song first pass is expanded without duplicates or relaxing relevance',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>{
+  calls++;const full=selection(input);
+  if(calls===1)return {response:{picks:full.picks.slice(0,1)}};
+  assert.match(input.messages.at(-1).content,/ADDITIONAL supported matches/);
+  return {response:full};
+ };
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(calls,2);
+ assert.equal(new Set(batch.items.map(songKey)).size,12);
+ assert.deepEqual(batch.selectionStats.attempts.map(t=>t.accepted),[1,11]);s.sqlite.close();
+});
+test('A failed expansion retains valid initial picks and records a partial result',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>{if(++calls===2)throw Error('Provider unavailable');return {response:{picks:selection(input).picks.slice(0,1)}};};
+ assert.equal((await s.call('/refresh',{})).status,200);
+ const batch=(await s.state()).batch;assert.equal(batch.items.length,1);
+ assert.equal(batch.selectionStats.attempts[1].error,'inference failed');s.sqlite.close();
+});
+test('Expansion cannot exceed per-artist cap or admit low-confidence selections',()=>{
+ const anchors=[{id:1,artist:'Anchor Artist',title:'Anchor',source:'playlist song'}];
+ const candidates=Array.from({length:4},(_,i)=>({artist:'Anchor Artist',title:'Song '+i,anchorIds:[1]}));
+ const pick=id=>({id,anchorId:1,score:85,reason:'Likely similar gentle melody and relaxed acoustic phrasing.'});
+ const first=parseRelevantPicks(JSON.stringify({picks:[pick(1)]}),candidates,anchors);
+ const combined=parseRelevantPicks(JSON.stringify({picks:[pick(1),pick(2),pick(3),{...pick(4),score:50}]}),candidates,anchors,first);
+ assert.equal(combined.length,2);assert.deepEqual(combined.map(t=>t.title),['Song 0','Song 1']);
+});

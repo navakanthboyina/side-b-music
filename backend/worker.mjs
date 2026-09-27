@@ -161,22 +161,35 @@ async function refresh(env) {
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const anchors=tasteAnchors(state);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const messages = relevanceMessages(candidates,anchors,feedback); let picks;
+    const messages = relevanceMessages(candidates,anchors,feedback); let picks=[];
+    const selectionStats={candidateCount:candidates.length,attempts:[]};
     for (let attempt=0;attempt<2;attempt++) {
-      let timer;
-      const response = await Promise.race([
-        env.AI.run(MODEL,{messages,max_tokens:1800,temperature:0.3}),
-        new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
-      ]).finally(()=>clearTimeout(timer));
+      let timer, response;
+      const stats={returned:0,accepted:0}; selectionStats.attempts.push(stats);
+      try {
+        response = await Promise.race([
+          env.AI.run(MODEL,{messages,max_tokens:1800,temperature:0.3}),
+          new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
+        ]).finally(()=>clearTimeout(timer));
+      } catch(error) {
+        stats.error='inference failed';
+        if(picks.length)break;
+        throw error;
+      }
       const replyText = aiReplyText(response);
-      try { picks=parseRelevantPicks(replyText,candidates,anchors); break; }
+      try { picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats); }
       catch (error) {
+        stats.error='validation failed';
         console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));
-        if (attempt===1) throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
-        messages.push({role:'assistant',content:replyText.slice(0,1500)},{role:'user',content:'Return only {"picks":[{"id":1,"anchorId":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only candidate IDs and their allowed anchorIds. Omit weak matches.'}); }
+        if(attempt===1&&!picks.length)throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
+      }
+      if(picks.length>=12)break;
+      const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
+      messages.push({role:'assistant',content:replyText.slice(0,6000)},{role:'user',content:
+        `Already accepted candidate IDs: ${JSON.stringify(selectedIds)}. Review the remaining candidates for up to ${12-picks.length} ADDITIONAL supported matches. Return only {"picks":[{"id":1,"anchorId":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only valid candidate IDs and their allowed anchorIds. Keep the same relevance threshold; do not repeat accepted songs or fill slots with weak matches.`});
     }
     const at=Date.now();
-    state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION};
+    state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
     for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
     for(const t of state.batch.items)state.shown[songKey(t)]=at;
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();

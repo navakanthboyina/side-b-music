@@ -1,7 +1,7 @@
 'use strict';
 (() => {
 if(window.MUNNA_SHARED?.apiBase){
- import('./shared-app.mjs?v=relevance-2').then(m=>m.startShared(window.MUNNA_SHARED,window.SIDE_B_DATA)).catch(()=>{
+ import('./shared-app.mjs?v=relevance-2b').then(m=>m.startShared(window.MUNNA_SHARED,window.SIDE_B_DATA)).catch(()=>{
   document.querySelector('#ai-status').textContent='The shared room could not load. Reload to try again. No local changes were published.';
   document.querySelector('#refresh').disabled=true;
  });

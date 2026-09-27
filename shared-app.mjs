@@ -28,7 +28,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     const batch=activeBatch(), songs=batch?.items||[];
     $('#feed').innerHTML=songs.map(card).join('')||'<p class="empty">No recommendations from the updated taste model yet. Complete playlist setup, then refresh.</p>';
     $('#feed-badge').textContent=batch?'SHARED AI · 14-DAY NO REPEATS':'AWAITING RELEVANT PICKS';
-    $('#feed-status').textContent=batch?`${songs.length} songs · shared batch saved ${new Date(batch.at).toLocaleString()}`:'Earlier batches are hidden because they used the old relevance rules.';
+    $('#feed-status').textContent=batch?`${songs.length} ${songs.length===1?'song':'songs'} · shared batch saved ${new Date(batch.at).toLocaleString()}${batch.selectionStats?' · '+batch.selectionStats.candidateCount+' eligible candidates · '+batch.selectionStats.attempts.length+' AI passes':''}`:'Earlier batches are hidden because they used the old relevance rules.';
     $('.week-tabs').innerHTML=[1,2].map(n=>`<button data-shared-week="${n}" aria-pressed="${week===n}">Week ${n}<span>Mixed languages</span></button>`).join('');
     $('#week-title').textContent=`Week ${week} · the shared mix`;
     $('#week-description').textContent='Songs from the current shared batch. Refresh replaces this plan for everyone.';

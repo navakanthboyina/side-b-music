@@ -80,3 +80,5 @@ npm run check
 Backend tests execute real SQLite SQL behind a D1-shaped adapter, with stubbed catalog and AI calls. They test shared reads/writes, stale-write protection, concurrent generation, quota bounds, owner import protection, failure recovery and no-repeat history. Two independent DOM sessions exercise the shared frontend. A Wrangler dry-run validates the Worker bundle. These checks do not establish successful production AI inference; that requires the owner deployment and a live refresh.
 
 References: [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/), [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [Llama 3.2 3B](https://developers.cloudflare.com/workers-ai/models/llama-3.2-3b-instruct/), [D1 CLI](https://developers.cloudflare.com/workers/wrangler/commands/d1/).
+
+Small batches receive one additional AI pass over the remaining candidates within the existing two-call budget. Accepted songs are retained if expansion fails. Relevance thresholds and per-artist limits apply across both passes. Saved selectionStats records candidate count and per-pass returned/accepted counts without the raw AI reply.
