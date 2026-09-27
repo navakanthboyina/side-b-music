@@ -2,7 +2,7 @@
 
 This backend makes recommendations and song feedback the same for everyone, with no visitor accounts. GitHub Pages continues to serve the dashboard. Cloudflare Workers runs AI and the API; D1 stores the shared state. A Cloudflare owner account is required once for deployment. Keep it on the Workers **Free** plan if you want hard free-tier limits rather than paid overages.
 
-**Status:** the dashboard is configured for the deployed shared Worker. A successful live AI generation still needs verification. This repository does not contain Cloudflare credentials or the owner's playlist CSVs.
+**Status:** the dashboard is configured for the deployed shared Worker. Live generation worked with the earlier ID-only model. The song-relevance revision requires deployment, a one-time playlist re-import, and live quality review. This repository does not contain Cloudflare credentials or the owner's playlist CSVs.
 
 ## Owner setup
 
@@ -37,7 +37,9 @@ Set `MUNNA_ADMIN_TOKEN` in your local environment to the same owner secret (pref
 node seed-playlists.mjs https://YOUR-WORKER.workers.dev /path/listen_with_me.csv /path/timeless_grooves.csv /path/my_shazam_tracks.csv
 ```
 
-This replaces only the shared starting-song set. It preserves community feedback and the current batch. Artist credits supply rotating catalog search sources; playlist songs are excluded as already familiar. Raw playlist rows are not sent to AI or returned by the public state API. AI receives independently fetched catalog candidates and explicit community song feedback. This is metadata-based discovery, not audio analysis or Spotify synchronization.
+This stores the song titles and artist credits in the owner’s D1 database and replaces the starting-song set while preserving feedback. A rotating sample of up to 16 playlist/liked songs, up to 24 feedback entries, and real catalog candidates are sent to Cloudflare AI. Reference song names appear in public recommendation descriptions; the complete imported list is not returned by the public state API or committed to GitHub. Artist query terms go to catalog providers. This is metadata-based discovery, not audio analysis or Spotify synchronization.
+
+Existing installations must run this import once after upgrading: older versions kept only normalized exclusion keys and artist names, which cannot reconstruct the original song titles. No new database migration or secret is needed. Batches without relevanceVersion 2 are hidden; feedback remains available.
 
 ## Activate the dashboard
 
@@ -58,7 +60,11 @@ Old browser-only data is left on its original device and is not automatically pu
 - Only the owner secret can change playlist starting data. Feedback is restricted to known shared/starter songs. No public API accepts arbitrary batches or full-profile replacements.
 - Database exports are available through `npx wrangler d1 export DB --remote --output /private/path/room-backup.sql`. Keep exports private.
 
-Catalog search tries Apple first and Deezer metadata if the Apple request fails, returns no tracks, or has no eligible tracks after filtering. Empty searches report aggregate counts for returned rows, invalid fields, different artist credits (informational only), exclusions, and duplicates; no playlist names or rows are included. Up to 18 artist searches, with at most two provider requests each, are made per refresh. Each request has an 8-second timeout. Provider failures show only safe status summaries, never response bodies or secrets. Fallback behavior is tested with simulated responses; reachability from the deployed Worker must be checked live. Listening links remain on the dashboard’s supported platforms.
+Catalog search is restricted to artists credited on the selected reference songs, including collaborators. Generic credits such as Various Artists are not search sources. Apple results must match a credited artist after punctuation normalization. If they fail or yield no eligible tracks, Deezer is queried for an exact artist identity and that artist’s tracks by catalog ID. Up to 12 search sources and 36 provider calls are allowed, with 8-second per-request timeouts. This conservative pool does not promise discovery of entirely new artists; AI ranks individual songs within it.
+
+The model must return candidate IDs, valid reference IDs, a musical-fit estimate, and a song-specific reason. Only estimates at least 70/100 are accepted; this is a model self-assessment, not calibrated accuracy. At most two songs per credited artist and 12 per batch are kept. Returning fewer is allowed. The code verifies reference identity and candidate provenance; it cannot prove subjective musical similarity or every generated statement. Descriptions label those judgments as estimates and never claim audio analysis. Failure preserves the previous valid batch instead of filling slots with unrelated songs.
+
+Owner diagnostics record only response shape, length, and validation errors, not generated replies or the taste prompt. This avoids logging reference-song details. Listening links remain on YouTube, SoundCloud, and Bandcamp.
 
 ## Validation
 
@@ -74,5 +80,3 @@ npm run check
 Backend tests execute real SQLite SQL behind a D1-shaped adapter, with stubbed catalog and AI calls. They test shared reads/writes, stale-write protection, concurrent generation, quota bounds, owner import protection, failure recovery and no-repeat history. Two independent DOM sessions exercise the shared frontend. A Wrangler dry-run validates the Worker bundle. These checks do not establish successful production AI inference; that requires the owner deployment and a live refresh.
 
 References: [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/), [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), [Llama 3.2 3B](https://developers.cloudflare.com/workers-ai/models/llama-3.2-3b-instruct/), [D1 CLI](https://developers.cloudflare.com/workers/wrangler/commands/d1/).
-
-Exact artist-credit matching is not required for catalog candidates. Search results can include collaborators and other artist credits; the AI selects among these real tracks. Song-level familiar, rated, recent, and duplicate exclusions still apply. Search relevance is supplied by the catalog and is not a guarantee of musical similarity.

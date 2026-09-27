@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 (async()=>{
  const {startShared}=await import('../shared-app.mjs');
- let room={revision:0,batch:{at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false;
+ let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false;
  const clients=[];
  async function boot(){const dom=new JSDOM(fs.readFileSync(new URL('../index.html','file://'+__filename),'utf8'),{url:'https://music.example',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
   w.eval(fs.readFileSync(new URL('../data.js','file://'+__filename),'utf8'));w.setInterval=()=>0;
@@ -22,6 +22,12 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  fail=true;b.d.querySelector('#feed [data-title="Second"]').click();await new Promise(r=>setImmediate(r));
  assert.match(b.d.querySelector('#ai-status').textContent,/Feedback was not saved/);assert.equal(Object.keys(room.songRatings).length,1);
  assert.equal(b.d.querySelector('#feed [data-title="Second"]').getAttribute('aria-pressed'),'false');
+ fail=false;room.revision++;room.needsTasteImport=true;room.batch.relevanceVersion=1;
+ await b.api.sync();assert.equal(b.d.querySelector('#feed .music-card'),null);
+ assert.equal(b.d.querySelector('#refresh').disabled,true);assert.match(b.d.querySelector('#ai-status').textContent,/re-import/);
+ room.revision++;room.needsTasteImport=false;room.batch.relevanceVersion=2;room.batch.items[0].reason='AI-estimated fit: <script>bad()</script>';
+ await b.api.sync();assert.equal(b.d.querySelector('#refresh').disabled,false);
+ assert.equal(b.d.querySelector('#feed script'),null);assert.match(b.d.querySelector('#feed').textContent,/AI-estimated fit/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

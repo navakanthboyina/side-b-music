@@ -1,5 +1,6 @@
 import starter from './starter.mjs';
-import { songKey, candidateMessages, parseCandidatePicks } from '../ai-core.mjs';
+import { songKey } from '../ai-core.mjs';
+import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks } from './relevance.mjs';
 
 export const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const WINDOW = 14 * 86400000;
@@ -17,7 +18,7 @@ async function read(db) {
   return { ...row, state: JSON.parse(row.data) };
 }
 function publicState(row) {
-  return { revision: row.revision, batch: row.state.batch, songRatings: row.state.songRatings,
+  return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
 }
@@ -61,15 +62,23 @@ function knownSongs(state) {
 async function catalogTracks(name, fetchCatalog, accept, stats) {
   const apple = new URL('https://itunes.apple.com/search');
   apple.search = new URLSearchParams({term:name,media:'music',entity:'song',attribute:'artistTerm',country:'IN',limit:'100'});
-  const deezer = new URL('https://api.deezer.com/search');
-  deezer.search = new URLSearchParams({q:'artist:"'+name.replace(/["\\]/g,' ')+'"',limit:'100'});
+  const deezer = new URL('https://api.deezer.com/search/artist');
+  deezer.search = new URLSearchParams({q:name,limit:'10'});
   const failures = []; let succeeded = false;
   for (const [provider,url] of [['Apple',apple],['Deezer',deezer]]) {
     try {
-      const response = await fetchCatalog(url,{signal:AbortSignal.timeout(8000)});
+      const response = await fetchCatalog(url.toString(),{signal:AbortSignal.timeout(8000)});
       if (!response.ok) { failures.push(provider+' HTTP '+response.status); continue; }
       let data;
       try { data = await response.json(); } catch { failures.push(provider+' invalid JSON'); continue; }
+      if(provider==='Deezer') {
+        const artist=Array.isArray(data.data) ? data.data.find(a=>validText(a.name)&&matchesArtist(a.name,name)&&Number.isInteger(a.id)&&a.id>0) : null;
+        if(!Array.isArray(data.data)){failures.push('Deezer invalid artist response');continue;}
+        if(!artist){succeeded=true;stats.searches++;continue;}
+        const top=await fetchCatalog('https://api.deezer.com/artist/'+artist.id+'/top?limit=100',{signal:AbortSignal.timeout(8000)});
+        if(!top.ok){failures.push('Deezer tracks HTTP '+top.status);continue;}
+        data=await top.json();
+      }
       const rows = provider==='Apple' ? data.results : data.data;
       if (!Array.isArray(rows)) { failures.push(provider+' invalid response'); continue; }
       succeeded = true; stats.searches++; stats.rows += rows.length;
@@ -84,30 +93,30 @@ async function catalogTracks(name, fetchCatalog, accept, stats) {
   throw new Error(failures.join('; '));
 }
 export async function collectCandidates(state, fetchCatalog = fetch) {
-  const seeds = new Map();
-  // Imported playlist rows stay out of the AI prompt. Only live catalog candidates and explicit shared feedback reach AI.
-  for (const name of [...state.seedArtists, ...starter.map(a=>a.name), ...Object.values(state.songRatings).filter(r=>r.value==='replay').flatMap(r=>r.artist.split(/\s*(?:,|&|;)\s*/))]) {
-    if (validText(name)) seeds.set(norm(name), name);
+  const anchors=tasteAnchors(state), seeds = new Map();
+  if(!anchors.length) throw fail(409,'Playlist song details need a one-time owner re-import before relevant recommendations can be generated.');
+  for(const anchor of anchors) for(const name of credits(anchor.artist)) {
+    if(!seeds.has(norm(name)))seeds.set(norm(name),{name,anchorIds:[]});
+    seeds.get(norm(name)).anchorIds.push(anchor.id);
   }
-  const all = [...seeds.values()];
-  const selected = Array.from({length:Math.min(18,all.length)},(_,i)=>all[(state.rotation*6+i)%all.length]);
+  const selected=[...seeds.values()].slice(0,12);
   const excluded = new Set([...Object.keys(state.songRatings), ...Object.keys(state.familiar), ...Object.entries(state.shown).filter(([,at])=>Date.now()-at<WINDOW).map(([key])=>key)]);
-  const stats = {searches:0,rows:0,invalid:0,differentArtistCredits:0,excluded:0,duplicate:0};
+  const stats = {searches:0,rows:0,invalid:0,artistMismatch:0,excluded:0,duplicate:0};
   const candidates = [], seen = new Set(); let successfulSearches = 0, failedSearches = 0; const failureReasons = new Set();
   // Try more artists when the first searches contain only familiar songs.
   for (let offset=0;offset<selected.length && candidates.length<24;offset+=6) {
-  const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async name => {
+  const results = await Promise.allSettled(selected.slice(offset,offset+6).map(async ({name,anchorIds}) => {
     const unique = new Set();
-    // Catalog search establishes candidate relevance. Exact artist credits are not an eligibility rule.
+    // Verify catalog credits; never trust broad search relevance alone.
     const tracks = await catalogTracks(name,fetchCatalog,t=> {
       if (!validText(t.artistName) || !validText(t.trackName)) { stats.invalid++; return false; }
-      if (!t.artistName.split(/\s*(?:,|&|;)\s*/).map(norm).includes(norm(name)) && norm(t.artistName)!==norm(name)) { stats.differentArtistCredits++; }
+      if (!matchesArtist(t.artistName,name)) { stats.artistMismatch++; return false; }
       const key = songKey({artist:t.artistName,title:t.trackName});
       if (excluded.has(key)) { stats.excluded++; return false; }
       if (unique.has(key)) { stats.duplicate++; return false; }
       unique.add(key); return true;
     },stats);
-    return tracks.slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',language:'Unspecified',mood:'Any mood'}));
+    return tracks.slice(0,4).map(t=>({artist:t.artistName,title:t.trackName,genre:t.primaryGenreName||'',anchorIds,language:'Unspecified',mood:'Any mood'}));
   }));
   for (const result of results) {
     if (result.status !== 'fulfilled') { failedSearches++; failureReasons.add(result.reason.message); continue; }
@@ -134,7 +143,8 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
     candidateCount, responseType: typeof reply,
     responseKeys: response && typeof response === 'object' ? Object.keys(response).slice(0,10) : [],
     rejected: error.diagnostics?.rejected || null,
-    reply: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').slice(0,4000)
+    validationError: error.message || null,
+    replyLength: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').length
   };
 }
 async function refresh(env) {
@@ -149,23 +159,24 @@ async function refresh(env) {
     const candidates = await collectCandidates(state, env.CATALOG_FETCH || fetch);
     if (!candidates.length) throw fail(422, 'No unseen catalog songs in this search. Existing picks remain; refresh later to try other sources.');
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
-    const profile = {candidates,feedback:[...ratings.filter(r=>r.value==='replay').slice(0,10),...ratings.filter(r=>r.value!=='replay').slice(0,10)].map(({artist,title,value})=>({artist,title,rating:value})),recentSongs:state.batch?.items||[],language:'All languages',mood:'Any mood',provisional:!ratings.some(r=>r.value==='replay')};
-    const messages = candidateMessages(profile); let picks;
+    const anchors=tasteAnchors(state);
+    const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
+    const messages = relevanceMessages(candidates,anchors,feedback); let picks;
     for (let attempt=0;attempt<2;attempt++) {
       let timer;
       const response = await Promise.race([
-        env.AI.run(MODEL,{messages,max_tokens:300,temperature:0.5}),
+        env.AI.run(MODEL,{messages,max_tokens:1800,temperature:0.3}),
         new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(504,'AI timed out. Existing picks remain.')),60000);})
       ]).finally(()=>clearTimeout(timer));
       const replyText = aiReplyText(response);
-      try { picks=parseCandidatePicks(replyText,profile); break; }
+      try { picks=parseRelevantPicks(replyText,candidates,anchors); break; }
       catch (error) {
         console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));
         if (attempt===1) throw fail(422,'AI did not select eligible songs. Existing picks remain. Owner diagnostic: munna-ai-validation.');
-        messages.push({role:'assistant',content:replyText.slice(0,1500)},{role:'user',content:'Return only {"ids":[...]} using numbers from candidates. Select up to 12 distinct IDs.'}); }
+        messages.push({role:'assistant',content:replyText.slice(0,1500)},{role:'user',content:'Return only {"picks":[{"id":1,"anchorId":1,"score":80,"reason":"specific estimated musical similarity"}]}. Use only candidate IDs and their allowed anchorIds. Omit weak matches.'}); }
     }
     const at=Date.now();
-    state.batch={at,items:picks.map(t=>({artist:t.artist,title:t.title,reason:profile.provisional?'AI selection from the shared discovery pool.':'AI selection using the community’s individual song feedback.',aiSong:true})),model:MODEL};
+    state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION};
     for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
     for(const t of state.batch.items)state.shown[songKey(t)]=at;
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
@@ -188,6 +199,7 @@ export default {
         if(!Array.isArray(body.songs)||body.songs.length>10000)throw fail(400,'Up to 10,000 songs allowed.');
         const songs=body.songs.map(cleanSong);
         return reply(await mutate(env.DB,s=>{
+          s.seedSongs=[...new Map(songs.map(t=>[songKey(t),t])).values()];
           s.familiar=Object.fromEntries(songs.map(t=>[songKey(t),true]));
           s.seedArtists=[...new Set(songs.flatMap(t=>t.artist.split(/\s*(?:,|&|;)\s*/)).filter(validText))].slice(0,1000);
           s.rotation=0;

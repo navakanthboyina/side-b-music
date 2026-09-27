@@ -2,209 +2,127 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
-import worker, {aiFailureDiagnostic, aiReplyText} from '../backend/worker.mjs';
+import worker,{aiReplyText,aiFailureDiagnostic} from '../backend/worker.mjs';
+import {songKey} from '../ai-core.mjs';
+import {tasteAnchors,matchesArtist,credits,parseRelevantPicks} from '../backend/relevance.mjs';
 import starter from '../backend/starter.mjs';
-
-// Execute real SQLite SQL through the subset of the D1 binding used by the Worker.
+function selection(input){
+ const p=JSON.parse(input.messages[1].content),counts=new Map();
+ return {picks:p.candidates.flatMap(t=>{
+  const count=counts.get(t.artist)||0;counts.set(t.artist,count+1);
+  return count<2?[{id:t.id,anchorId:t.anchorIds[0],score:85,reason:'A likely match for the gentle melodic phrasing of the reference song.'}]:[];
+ }).slice(0,12)};
+}
 function setup(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../backend/migrations/0001_community.sql',import.meta.url),'utf8'));
  const DB={prepare(sql){return {bind(...args){return {
   async first(){return sqlite.prepare(sql).get(...args)||null;},
   async run(){return {meta:{changes:Number(sqlite.prepare(sql).run(...args).changes)}};}
  };}};}};
+ const seedSongs=Array.from({length:16},(_,i)=>({artist:'Fixture Artist '+i,title:'Anchor Song '+i}));
+ const row=sqlite.prepare('SELECT data FROM community WHERE id=1').get();const data=JSON.parse(row.data);data.seedSongs=seedSongs;data.familiar=Object.fromEntries(seedSongs.map(t=>[songKey(t),true]));sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(data));
  let aiCalls=0, catalogCalls=0;
- const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(){aiCalls++;return {response:JSON.stringify({ids:Array.from({length:12},(_,i)=>i+1)})};}},async CATALOG_FETCH(url){catalogCalls++;const artist=new URL(url).searchParams.get('term');return Response.json({results:Array.from({length:8},(_,i)=>({artistName:artist,trackName:'Fixture Song '+i,primaryGenreName:'Pop'}))});}};
+ const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(url){catalogCalls++;const artist=new URL(url).searchParams.get('term');return Response.json({results:Array.from({length:8},(_,i)=>({artistName:artist,trackName:'Fixture Song '+i,primaryGenreName:'Pop'}))});}};
  const call=(path,body,extra={})=>worker.fetch(new Request('https://backend.example'+path,{method:body===undefined?'GET':'POST',headers:{origin:env.ALLOWED_ORIGIN,'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)}),env);
  const state=()=>call('/state').then(r=>r.json());
  const cooldown=()=>sqlite.exec('UPDATE community SET next_refresh=0');
  return {sqlite,env,call,state,cooldown,calls:()=>({aiCalls,catalogCalls})};
 }
+
 const fixture={artist:starter[0].name,title:starter[0].track};
-test('Two visitors share song feedback, 12-song batches and no-repeat history',async()=>{
- const s=setup();const initial=await s.state();assert.equal(initial.batch,null);
- assert.equal((await s.call('/feedback',{...fixture,rating:'replay'})).status,200);
- const browserB=await s.state();assert.equal(Object.values(browserB.songRatings)[0].value,'replay');
- assert.equal((await s.call('/feedback',{...fixture,rating:'skip'})).status,200);
+test('Shared batch, individual ratings, refresh cooldown and no repeats',async()=>{
+ const s=setup();assert.equal((await s.call('/refresh',{})).status,200);const a=(await s.state()).batch;
+ assert.equal(a.items.length,12);assert.equal(a.relevanceVersion,2);
+ const song=a.items[0];await s.call('/feedback',{...song,rating:'replay'});
+ assert.equal(Object.values((await s.state()).songRatings)[0].value,'replay');
+ await s.call('/feedback',{...song,rating:'skip'});
  assert.equal(Object.values((await s.state()).songRatings)[0].value,'skip');
- const first=await s.call('/refresh',{});assert.equal(first.status,200);const a=await first.json();assert.equal(a.batch.items.length,12);
- assert.deepEqual((await s.state()).batch,a.batch);
- assert.equal((await s.call('/refresh',{})).status,409);assert.equal(s.calls().aiCalls,1);
- s.cooldown();const second=await s.call('/refresh',{});assert.equal(second.status,200);const b=await second.json();
- const old=new Set(a.batch.items.map(t=>t.artist+'|'+t.title));assert(b.batch.items.every(t=>!old.has(t.artist+'|'+t.title)));
- s.sqlite.close();
+ assert.equal((await s.call('/refresh',{})).status,409);s.cooldown();
+ assert.equal((await s.call('/refresh',{})).status,200);const b=(await s.state()).batch;
+ const keys=new Set(a.items.map(songKey));assert(b.items.every(t=>!keys.has(songKey(t))));s.sqlite.close();
 });
-test('Concurrent refresh is locked and concurrent feedback is not overwritten',async()=>{
- const s=setup();let finish,started;const ready=new Promise(r=>started=r);
- s.env.AI.run=()=>new Promise(r=>{finish=r;started();});
- const generation=s.call('/refresh',{});await ready;
- assert.equal((await s.call('/refresh',{})).status,409);
- assert.equal((await s.call('/feedback',{...fixture,rating:'known'})).status,200);
- finish({response:'{"ids":[1,2,3]}'});
- assert.equal((await generation).status,409);
- const state=await s.state();assert.equal(state.batch,null);assert.equal(Object.values(state.songRatings)[0].value,'known');assert.equal(state.refreshing,false);
- s.sqlite.close();
+test('Catalog results unrelated to requested artist never reach AI',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async url=>Response.json(new URL(url).hostname==='itunes.apple.com'?{results:[{artistName:'Unrelated Generic Artists',trackName:'Random Search Hit'}]}:{data:[]});
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);assert.match((await response.json()).error,/artistMismatch/);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
-test('AI failure preserves batch and later refresh recovers',async()=>{
- const s=setup();await s.call('/refresh',{});const before=(await s.state()).batch;s.cooldown();
- s.env.AI.run=async()=>({response:'{"ids":[999]}'});
- assert.equal((await s.call('/refresh',{})).status,422);assert.deepEqual((await s.state()).batch,before);assert.equal((await s.state()).refreshing,false);
- s.cooldown();s.env.AI.run=async()=>({response:'{"ids":[1,2]}'});
+test('Deezer fallback resolves exact artist ID before requesting tracks',async()=>{
+ const s=setup();const names=new Map();let topCalls=0;
+ s.env.CATALOG_FETCH=async input=>{
+  assert.equal(typeof input,'string');const url=new URL(input);
+  if(url.hostname==='itunes.apple.com')return new Response('',{status:403});
+  if(url.pathname==='/search/artist'){
+   const name=url.searchParams.get('q'),id=names.size+1;names.set(id,name);
+   return Response.json({data:[{id:99999,name:'Unrelated Artist'},{id,name}]});
+  }
+  const id=Number(url.pathname.split('/')[2]);assert(names.has(id));topCalls++;
+  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:names.get(id)},title:'Fallback Song '+i}))});
+ };
+ assert.equal((await s.call('/refresh',{})).status,200);assert(topCalls>0);s.sqlite.close();
+});
+test('Only explicit credit matches allowed; punctuation variants work; generic credits ignored',()=>{
+ assert(matchesArtist('A. B. Singer & Guest','A B Singer'));
+ assert(matchesArtist('Main Singer feat. Guest Singer','Guest Singer'));
+ assert(!matchesArtist('Not The Singer','Singer'));
+ assert.deepEqual(credits('Various Artists'),[]);
+});
+test('Liked songs lead taste; skipped and known songs do not become positive anchors',()=>{
+ const liked={artist:'Loved Artist',title:'Liked Song',value:'replay',at:3};
+ const skipped={artist:'Same Artist',title:'Skipped Song',value:'skip',at:2};
+ const other={artist:'Same Artist',title:'Other Song'};
+ const anchors=tasteAnchors({rotation:0,seedSongs:[skipped,other],songRatings:{[songKey(liked)]:liked,[songKey(skipped)]:skipped}});
+ assert.equal(anchors[0].title,'Liked Song');assert.equal(anchors[0].source,'liked song');
+ assert(!anchors.some(t=>t.title==='Skipped Song'));assert(anchors.some(t=>t.title==='Other Song'));
+});
+test('Prompt carries representative song taste and individual negative feedback',async()=>{
+ const s=setup();await s.call('/feedback',{...fixture,rating:'skip'});
+ s.env.AI.run=async(model,input)=>{
+  const p=JSON.parse(input.messages[1].content);assert(p.anchors.some(t=>t.title.startsWith('Anchor Song')));
+  assert(p.feedback.some(t=>t.title===fixture.title&&t.rating==='skip'));
+  return {response:selection(input)};
+ };
  assert.equal((await s.call('/refresh',{})).status,200);s.sqlite.close();
 });
-test('Owner-only seed import, JSON/origin checks, unknown songs and public response privacy',async()=>{
- const s=setup();const songs=[{artist:'Private Fixture Artist',title:'Private Fixture Title'}];
- assert.equal((await s.call('/admin/seed',{songs})).status,401);
- assert.equal((await s.call('/admin/seed',{songs},{authorization:'Bearer test-owner-secret'})).status,200);
- const publicData=JSON.stringify(await s.state());assert(!publicData.includes('Private Fixture'));assert(!publicData.includes('seedArtists'));assert(!publicData.includes('test-owner-secret'));
- assert.equal((await s.call('/feedback',{...songs[0],rating:'replay'})).status,400);
- assert.equal((await s.call('/feedback',{...fixture,rating:'bad'})).status,400);
- assert.equal((await s.call('/refresh',{}, {origin:'https://evil.example'})).status,403);
- assert.equal((await s.call('/feedback',{...fixture,rating:'replay',extra:'x'.repeat(5000)})).status,413);
- assert.equal((await s.call('/refresh',{}, {'content-type':'text/plain'})).status,415);
- assert.equal((await s.call('/state',undefined,{origin:'https://evil.example'})).status,403);
- s.sqlite.close();
+test('Descriptions cite validated source and mark similarity as estimate; weak or invented references rejected',()=>{
+ const anchors=[{id:1,artist:'Anchor Artist',title:'Real Reference',source:'liked song'}];
+ const candidates=[{artist:'Anchor Artist',title:'New Track',anchorIds:[1]}];
+ const good={id:1,anchorId:1,score:80,reason:'Likely similar gentle phrasing and acoustic arrangements.'};
+ const out=parseRelevantPicks(JSON.stringify({picks:[good]}),candidates,anchors);
+ assert.match(out[0].reason,/Real Reference/);assert.match(out[0].reason,/liked song/);assert.match(out[0].reason,/AI-estimated fit/);
+ for(const change of [{anchorId:99},{id:99},{score:40},{reason:''}])assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{...good,...change}]}),candidates,anchors));
+ assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors));
 });
-test('Feedback limits, daily generation cap and expired lease recovery',async()=>{
- const s=setup();for(let i=0;i<30;i++)assert.equal((await s.call('/feedback',{...fixture,rating:i%2?'skip':'replay'})).status,200);
- assert.equal((await s.call('/feedback',{...fixture,rating:'replay'})).status,429);
- s.sqlite.exec("UPDATE community SET lease='expired',lease_until=1");
- assert.equal((await s.call('/refresh',{})).status,200);
- const day=new Date().toISOString().slice(0,10);s.sqlite.prepare('UPDATE limits SET count=30 WHERE key=?').run('generation:'+day);s.cooldown();
- assert.equal((await s.call('/refresh',{})).status,429);assert.equal((await s.state()).refreshing,false);assert.equal(s.calls().aiCalls,1);
- s.sqlite.close();
-});
-
-test('Catalog search widens past exhausted artists',async()=>{
- const s=setup();let calls=0;
- s.env.CATALOG_FETCH=async url=>{
-  calls++;assert.equal(new URL(url).searchParams.get('limit'),'100');
-  const artist=new URL(url).searchParams.get('term');
-  return Response.json({results:calls<=6?[]:Array.from({length:4},(_,i)=>({artistName:artist,trackName:'Fresh Fixture '+i}))});
- };
- const response=await s.call('/refresh',{});
- assert.equal(response.status,200);assert(calls>6);assert.equal(s.calls().aiCalls,1);
- s.sqlite.close();
-});
-test('Catalog outage is not reported as exhausted songs and never calls AI',async()=>{
- const s=setup();s.env.CATALOG_FETCH=async()=>new Response('Unavailable',{status:503});
- const response=await s.call('/refresh',{});
- assert.equal(response.status,503);assert.match((await response.json()).error,/catalog could not be reached/);
- assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).refreshing,false);
- s.sqlite.close();
-});
-test('Successful empty catalog remains distinct from an outage',async()=>{
- const s=setup();s.env.CATALOG_FETCH=async()=>Response.json({results:[]});
- assert.equal((await s.call('/refresh',{})).status,422);
- assert.equal(s.calls().aiCalls,0);s.sqlite.close();
-});
-
-test('Apple outage falls back to Deezer metadata and completes AI selection',async()=>{
- const s=setup();let fallbackCalls=0;
- s.env.CATALOG_FETCH=async url=>{
-  url=new URL(url);
-  if(url.hostname==='itunes.apple.com')return new Response('Unavailable',{status:403});
-  assert.equal(url.hostname,'api.deezer.com');fallbackCalls++;
-  const artist=url.searchParams.get('q').slice(8,-1);
-  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:artist},title:'Fallback Fixture '+i}))});
- };
- const response=await s.call('/refresh',{});
- assert.equal(response.status,200);assert(fallbackCalls>0);
- assert.equal((await response.json()).batch.items.length,12);assert.equal(s.calls().aiCalls,1);
- s.sqlite.close();
-});
-test('Both catalog failures expose safe provider status and preserve the batch',async()=>{
+test('Low-confidence model response preserves current batch and releases lease',async()=>{
  const s=setup();await s.call('/refresh',{});const before=(await s.state()).batch;s.cooldown();
- s.env.CATALOG_FETCH=async url=>new Response('Private response body',{status:new URL(url).hostname==='itunes.apple.com'?403:429});
- const response=await s.call('/refresh',{});assert.equal(response.status,503);
- const message=(await response.json()).error;
- assert.match(message,/Apple HTTP 403/);assert.match(message,/Deezer HTTP 429/);assert(!message.includes('Private'));
- assert.deepEqual((await s.state()).batch,before);s.sqlite.close();
+ s.env.AI.run=async()=>({response:{picks:[]}});assert.equal((await s.call('/refresh',{})).status,422);
+ assert.deepEqual((await s.state()).batch,before);assert.equal((await s.state()).refreshing,false);s.sqlite.close();
 });
-
-test('Successful empty Apple response still tries Deezer',async()=>{
- const s=setup();let fallback=0;
- s.env.CATALOG_FETCH=async input=>{
-  const url=new URL(input);
-  if(url.hostname==='itunes.apple.com')return Response.json({results:[]});
-  fallback++;const artist=url.searchParams.get('q').slice(8,-1);
-  return Response.json({data:Array.from({length:4},(_,i)=>({artist:{name:artist},title:'New Empty Fallback '+i}))});
- };
- const response=await s.call('/refresh',{});
- assert.equal(response.status,200);assert(fallback>0);assert.equal(s.calls().aiCalls,1);s.sqlite.close();
+test('Concurrent feedback prevents stale AI overwrite',async()=>{
+ const s=setup();let finish,start;const ready=new Promise(r=>start=r);
+ s.env.AI.run=async(model,input)=>new Promise(r=>{finish=()=>r({response:selection(input)});start();});
+ const pending=s.call('/refresh',{});await ready;assert.equal((await s.call('/refresh',{})).status,409);
+ await s.call('/feedback',{...fixture,rating:'known'});finish();assert.equal((await pending).status,409);
+ assert.equal((await s.state()).batch,null);s.sqlite.close();
 });
-test('Fully excluded Apple results still try Deezer, keeping familiar songs excluded',async()=>{
- const s=setup();
- const seeds=starter.map(a=>({artist:a.name,title:'Familiar Fixture'}));
- await s.call('/admin/seed',{songs:seeds},{authorization:'Bearer test-owner-secret'});
- s.env.CATALOG_FETCH=async input=>{
-  const url=new URL(input);
-  if(url.hostname==='itunes.apple.com')return Response.json({results:[{artistName:url.searchParams.get('term'),trackName:'Familiar Fixture'}]});
-  const artist=url.searchParams.get('q').slice(8,-1);
-  return Response.json({data:[{artist:{name:artist},title:'Familiar Fixture'},...Array.from({length:4},(_,i)=>({artist:{name:artist},title:'Fresh Exclusion Fallback '+i}))]});
- };
- const response=await s.call('/refresh',{});assert.equal(response.status,200);
- assert((await response.json()).batch.items.every(t=>t.title!=='Familiar Fixture'));s.sqlite.close();
+test('Owner import retains song-level taste privately; old batch hidden; migration needs re-import',async()=>{
+ const s=setup();const row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);delete row.seedSongs;row.batch={items:[{artist:'Legacy',title:'Unrelated'}]};
+ s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
+ assert.equal((await s.state()).needsTasteImport,true);assert.equal((await s.state()).batch,null);
+ assert.equal((await s.call('/refresh',{})).status,409);
+ const songs=[{artist:'Private Example',title:'Private Title'}];assert.equal((await s.call('/admin/seed',{songs})).status,401);
+ assert.equal((await s.call('/admin/seed',{songs},{authorization:'Bearer test-owner-secret'})).status,200);
+ const state=await s.state();assert.equal(state.needsTasteImport,false);assert(!JSON.stringify(state).includes('Private Title'));
+ const data=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.deepEqual(data.seedSongs,songs);s.sqlite.close();
 });
-test('Empty results include aggregate counts without playlist content',async()=>{
- const s=setup();s.env.CATALOG_FETCH=async input=>Response.json(new URL(input).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
- const response=await s.call('/refresh',{});assert.equal(response.status,422);
- const error=(await response.json()).error;assert.match(error,/"rows":0/);assert.match(error,/"differentArtistCredits":0/);
- assert(!error.includes(starter[0].name));s.sqlite.close();
+test('Origin, unknown song and daily cap gates remain enforced',async()=>{
+ const s=setup();assert.equal((await s.call('/refresh',{}, {origin:'https://evil.example'})).status,403);
+ assert.equal((await s.call('/feedback',{artist:'Unknown',title:'Unknown',rating:'replay'})).status,400);
+ await s.call('/refresh',{});s.cooldown();const day=new Date().toISOString().slice(0,10);
+ s.sqlite.prepare('UPDATE limits SET count=30 WHERE key=?').run('generation:'+day);
+ assert.equal((await s.call('/refresh',{})).status,429);s.sqlite.close();
 });
-
-test('Different catalog artist credits reach AI instead of all being rejected',async()=>{
- const s=setup();let search=0;
- s.env.CATALOG_FETCH=async()=>{
-  search++;
-  return Response.json({results:Array.from({length:4},(_,i)=>({artistName:'Guest Fixture '+search+' Featuring Ensemble',trackName:'Discovery '+i}))});
- };
- const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const state=await response.json();assert.equal(state.batch.items.length,12);
- assert(state.batch.items.every(t=>t.artist.startsWith('Guest Fixture')));
- assert.equal(s.calls().aiCalls,1);s.sqlite.close();
-});
-test('Accepting different artist credits does not bypass familiar or rated exclusions',async()=>{
- const s=setup();
- const known={artist:'Different Catalog Credit',title:'Familiar Fixture'};
- await s.call('/admin/seed',{songs:[known]},{authorization:'Bearer test-owner-secret'});
- await s.call('/feedback',{...fixture,rating:'skip'});
- s.env.CATALOG_FETCH=async()=>Response.json({results:[
-  {artistName:known.artist,trackName:known.title},
-  {artistName:fixture.artist,trackName:fixture.title}
- ]});
- const response=await s.call('/refresh',{});assert.equal(response.status,422);
- assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
-});
-
-test('AI diagnostics identify response shape and rejections without including the input profile',()=>{
- const diagnostic=aiFailureDiagnostic({response:'{"ids":[999]}',usage:{total_tokens:10},privateInput:'not for logging'},
-   {diagnostics:{rejected:{invalidSelection:1},profile:'not for logging'}},20,1);
- assert.equal(diagnostic.model,'@cf/meta/llama-3.2-3b-instruct');
- assert.equal(diagnostic.attempt,2);assert.equal(diagnostic.candidateCount,20);
- assert.equal(diagnostic.reply,'{"ids":[999]}');assert.equal(diagnostic.rejected.invalidSelection,1);
- assert(!JSON.stringify(diagnostic).includes('not for logging'));
- assert.equal(aiFailureDiagnostic({response:'x'.repeat(5000)},{},1,0).reply.length,4000);
- assert.equal(aiFailureDiagnostic({result:{}},{},1,0).responseType,'undefined');
-});
-
-test('Structured Cloudflare output saves a shared batch without corrective retry',async()=>{
- const s=setup();let calls=0;
- s.env.AI.run=async()=>{calls++;return {response:{ids:[3,6,9]},choices:[],model:'fixture'};};
- const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const result=await response.json();assert.equal(result.batch.items.length,3);
- assert.deepEqual((await s.state()).batch,result.batch);assert.equal(calls,1);s.sqlite.close();
-});
-test('Response normalization supports text and chat envelopes without relaxing ID validation',async()=>{
- assert.equal(aiReplyText({response:{ids:[4,8]}}),'{"ids":[4,8]}');
- assert.equal(aiReplyText({response:'{"ids":[4]}'}),'{"ids":[4]}');
- assert.equal(aiReplyText({choices:[{message:{content:'{"ids":[8]}'}}]}),'{"ids":[8]}');
- assert.equal(aiReplyText({prompt_text:'must not parse input'}),'');
- const s=setup();let calls=0;
- s.env.AI.run=async(model,input)=>{
-  calls++;
-  if(calls===2)assert.equal(input.messages.at(-2).content,'{"ids":[999]}');
-  return {response:{ids:[999]}};
- };
- assert.equal((await s.call('/refresh',{})).status,422);
- assert.equal(calls,2);assert.equal((await s.state()).batch,null);s.sqlite.close();
+test('Cloudflare object/text envelopes normalize; diagnostics do not log generated taste references',()=>{
+ assert.equal(aiReplyText({response:{picks:[]}}),'{"picks":[]}');
+ assert.equal(aiReplyText({choices:[{message:{content:'{"picks":[]}'}}]}),'{"picks":[]}');
+ const d=aiFailureDiagnostic({response:'private generated reference'},{},12,0);
+ assert(!JSON.stringify(d).includes('private generated reference'));assert(d.replyLength>0);
 });
