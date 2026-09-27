@@ -143,9 +143,8 @@ test('A one-song first pass is expanded without duplicates or relaxing relevance
 test('An incomplete expansion preserves the previous complete batch',async()=>{
  const s=setup();await s.call('/refresh',{});const before=(await s.state()).batch;s.cooldown();let calls=0;
  s.env.AI.run=async(model,input)=>{if(++calls>1)throw Error('Provider unavailable');return {response:{picks:selection(input).picks.slice(0,1)}};};
- const response=await s.call('/refresh',{});assert.equal(response.status,422);
- const error=await response.json();assert.match(error.error,/Found 1 of 12/);
- assert(error.selectionStats.attempts.some(t=>t.error==='inference failed'));
+ const response=await s.call('/refresh',{});assert.equal(response.status,200);
+ const result=await response.json();assert.equal(result.generationStatus,'pending');assert.equal(result.pendingSongCount,1);
  assert.deepEqual((await s.state()).batch,before);assert.equal((await s.state()).refreshing,false);s.sqlite.close();
 });
 test('Expansion cannot exceed per-artist cap or admit low-confidence selections',()=>{
@@ -203,7 +202,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'fresh-pools-12-2');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'resumable-12-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -275,4 +274,27 @@ test('A redirecting live-provider-shaped fixture generates twelve and provider e
  s.cooldown();s.env.CATALOG_FETCH=async()=>new Response('',{status:503});
  const result=await (await s.call('/refresh',{})).json();assert.match(result.error,/Catalog requests failed/);
  assert(result.selectionStats.pools.some(p=>p.detail.includes('HTTP 503')));s.sqlite.close();
+});
+
+test('Eight approved songs survive refresh and are completed with four new songs',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,8):[]}});
+ const first=await s.call('/refresh',{});assert.equal(first.status,200);
+ const partial=await first.json();assert.equal(partial.generationStatus,'pending');assert.equal(partial.pendingSongCount,8);assert.equal(partial.batch,null);
+ const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ const firstKeys=new Set(stored.pending.items.map(songKey));assert.equal(firstKeys.size,8);
+ assert.equal(Object.keys(stored.shown).length,0);
+ assert(!JSON.stringify(partial).includes(stored.pending.items[0].title));
+ s.cooldown();s.env.AI.run=async(model,input)=>({response:selection(input)});
+ const second=await s.call('/refresh',{});assert.equal(second.status,200);
+ const complete=await second.json();assert.equal(complete.generationStatus,'saved');assert.equal(complete.batch.items.length,12);
+ assert.equal(complete.batch.selectionStats.resumedCount,8);assert.equal(complete.pendingSongCount,0);
+ assert.equal(complete.batch.items.filter(t=>firstKeys.has(songKey(t))).length,8);assert.equal(new Set(complete.batch.items.map(songKey)).size,12);
+ s.sqlite.close();
+});
+test('Changing song feedback invalidates the pending taste draft',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,8):[]}});
+ await s.call('/refresh',{});assert.equal((await s.state()).pendingSongCount,8);
+ await s.call('/feedback',{...fixture,rating:'skip'});assert.equal((await s.state()).pendingSongCount,0);
+ assert.equal(JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data).pending,null);s.sqlite.close();
 });

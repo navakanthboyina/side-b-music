@@ -25,7 +25,8 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     return `<article class="music-card"><div class="card-top"><span>${t.aiSong?'SHARED AI PICK':'SHARED STARTER'}</span><span>${String(i+1).padStart(2,'0')}</span></div><div class="card-body"><h3>${esc(t.title)}</h3><div class="track-title">${esc(t.artist)}</div><p>${esc(t.reason)}</p><div class="card-links"><a class="listen" href="${search(t.artist,t.title)}" target="_blank" rel="noopener noreferrer">YouTube ↗</a><a class="alt-link" href="https://soundcloud.com/search/sounds?q=${encodeURIComponent(t.artist+' '+t.title)}" target="_blank" rel="noopener noreferrer">SoundCloud</a><a class="alt-link" href="https://bandcamp.com/search?q=${encodeURIComponent(t.artist+' '+t.title)}" target="_blank" rel="noopener noreferrer">Bandcamp</a></div></div><div class="card-feedback">${[['replay','Like'],['skip','Not for us'],['known','Already know']].map(([value,label])=>`<button class="rate" data-shared-rating="${rating===value?'clear':value}" data-artist="${esc(t.artist)}" data-title="${esc(t.title)}" aria-pressed="${rating===value}" aria-label="${esc(label+' '+t.title+' for everyone')}">${label}</button>`).join('')}</div></article>`;
   }
   function render(){
-    const batch=activeBatch(), songs=batch?.items||[];
+    const batch=activeBatch(), songs=batch?.items||[],weekSize=Math.ceil(songs.length/2);
+    $('#view-plan .page-heading .muted').textContent=songs.length===12?'Six songs each week from the complete shared batch.':`${songs.length} songs in the previous batch, split across both weeks while the next 12-song batch is prepared.`;
     $('#feed').innerHTML=songs.map(card).join('')||'<p class="empty">No recommendations from the updated taste model yet. Complete playlist setup, then refresh.</p>';
     $('#feed-badge').textContent=batch?'SHARED AI · 14-DAY NO REPEATS':'AWAITING RELEVANT PICKS';
     $('#feed-status').textContent=batch?`${songs.length} ${songs.length===1?'song':'songs'} · shared batch saved ${new Date(batch.at).toLocaleString()}${batch.selectionStats?' · '+batch.selectionStats.candidateCount+' eligible candidates · '+batch.selectionStats.attempts.length+' AI passes':''}`:'Earlier batches are hidden because they used the old relevance rules.';
@@ -33,7 +34,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     $('#week-title').textContent=`Week ${week} · the shared mix`;
     $('#week-description').textContent='Songs from the current shared batch. Refresh replaces this plan for everyone.';
     $('#plan-count').textContent=`${songs.length} shared songs`;
-    $('#plan-cards').innerHTML=songs.slice((week-1)*6,week*6).map(card).join('')||'<p class="empty">No songs for this week yet. Refresh generates a complete 12-song batch.</p>';
+    $('#plan-cards').innerHTML=songs.slice((week-1)*weekSize,week*weekSize).map(card).join('')||'<p class="empty">No songs for this week yet. Refresh generates a complete 12-song batch.</p>';
     const ratings=Object.values(shared?.songRatings||{}).sort((a,b)=>b.at-a.at);
     $('#shared-count').textContent=String(shared?.seedSongCount||0);
     $('#shared-likes').textContent=String(ratings.filter(r=>r.value==='replay').length);
@@ -50,11 +51,11 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   async function sync(){
     if(busy||polling||doc.hidden)return;
     polling=true;
-    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Connected to the shared room. Everyone sees these picks and ratings.');}
+    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.pendingSongCount?`${shared.pendingSongCount}/12 approved songs saved in the shared draft. Refresh after the cooldown to continue filling it.`:shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Connected to the shared room. Everyone sees these picks and ratings.');}
     catch{status('Shared service unavailable. Showing the last loaded picks; feedback has not been saved locally.');}
     finally{polling=false;}
   }
-  $('.ai-panel').innerHTML='<p class="eyebrow accent">ONE SHARED LISTENING ROOM · NO SIGN-IN</p><h2>Everyone helps choose what comes next.</h2><p>Everyone sees the same songs. Feedback is public and affects the next batch for everyone. The latest rating for a song replaces its previous shared rating.</p><p class="small muted">AI compares real catalog tracks with a sample of playlist songs and individual song feedback. Each description identifies its reference song and labels musical similarity as an estimate. No model download or GPU is needed. It does not listen to the audio. New batches contain 12 qualifying songs. Refresh searches additional taste references when needed; if it cannot complete 12, the previous batch stays saved. Languages stay mixed. Refresh is limited to once a minute and 30 attempts per day for this room.</p><p id="ai-status" role="status">Connecting to the shared room…</p>';
+  $('.ai-panel').innerHTML='<p class="eyebrow accent">ONE SHARED LISTENING ROOM · NO SIGN-IN</p><h2>Everyone helps choose what comes next.</h2><p>Everyone sees the same songs. Feedback is public and affects the next batch for everyone. The latest rating for a song replaces its previous shared rating.</p><p class="small muted">AI compares real catalog tracks with a sample of playlist songs and individual song feedback. Each description identifies its reference song and labels musical similarity as an estimate. No model download or GPU is needed. It does not listen to the audio. New batches contain 12 qualifying songs. Refresh searches additional taste references when needed; if it cannot complete 12, approved picks are saved as a draft for the next refresh while the previous batch stays visible. Languages stay mixed. Refresh is limited to once a minute and 30 attempts per day for this room.</p><p id="ai-status" role="status">Connecting to the shared room…</p>';
   $('.filters').innerHTML='<span class="small">One mix for everyone · all languages · all moods</span>';
   $('.feature-panel').hidden=true;$('#ai-diagnostics').hidden=true;
   $('#basis').textContent='Shared feedback applies to individual songs. Recent recommendations stay excluded for 14 days across every browser.';
@@ -70,7 +71,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   $('#comfort-mixes').innerHTML=data.mixes.map(m=>`<article class="mix"><div class="mix-head"><h2>${esc(m.title)}</h2><p>${esc(m.note)}</p></div><ol>${m.tracks.map(([a,t])=>`<li><div><strong>${esc(t)}</strong><span>${esc(a)}</span></div><a href="${search(a,t)}" target="_blank" rel="noopener noreferrer">Play ↗</a></li>`).join('')}</ol></article>`).join('');
   $('#refresh').addEventListener('click',async()=>{
     if(busy||!shared)return;busy=true;controls();status('Generating the next shared AI batch. Everyone’s current picks stay available…');
-    try{accept(await request('/refresh',{}));status(`${shared.batch.items.length} AI picks saved for everyone.`);}
+    try{const result=await request('/refresh',{});accept(result);status(result.message||`${shared.batch?.items.length||0} AI picks saved for everyone.`);}
     catch(error){status(error.message+' Current shared picks have not been replaced.');}
     finally{busy=false;controls();}
   });

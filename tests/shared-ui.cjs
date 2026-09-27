@@ -28,6 +28,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  room.revision++;room.needsTasteImport=false;room.batch.relevanceVersion=2;room.batch.items[0].reason='AI-estimated fit: <script>bad()</script>';
  await b.api.sync();assert.equal(b.d.querySelector('#refresh').disabled,false);
  assert.equal(b.d.querySelector('#feed script'),null);assert.match(b.d.querySelector('#feed').textContent,/AI-estimated fit/);
+ b.d.querySelector('[data-shared-week="2"]').click();
+ assert.equal(b.d.querySelectorAll('#plan-cards .music-card').length,1);
+ assert.match(b.d.querySelector('#plan-cards').textContent,/Second/);
+ room.revision++;room.pendingSongCount=8;await b.api.sync();
+ assert.match(b.d.querySelector('#ai-status').textContent,/8\/12 approved songs/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
