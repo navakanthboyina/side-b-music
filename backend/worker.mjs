@@ -2,7 +2,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'fresh-pools-12-1';
+export const RECOMMENDER_BUILD = 'fresh-pools-12-2';
 export const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -87,7 +87,7 @@ async function catalogTracks(name, fetchCatalog, accept, stats) {
       const eligible = tracks.filter(accept);
       if (eligible.length) return eligible;
     } catch(error) {
-      failures.push(provider+' '+(['TimeoutError','AbortError'].includes(error.name)?'timeout':'request failed'));
+      failures.push(provider+' '+(error.catalogCode||(['TimeoutError','AbortError'].includes(error.name)?'timeout':'request failed ('+error.name+')')));
     }
   }
   if (succeeded) return [];
@@ -150,6 +150,25 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
     replyLength: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').length
   };
 }
+export function budgetedCatalogFetch(fetcher,stats,deadline) {
+  const hosts=new Set(['itunes.apple.com','api.deezer.com']);
+  const problem=code=>Object.assign(new Error(code),{catalogCode:code});
+  return async(input,options={})=>{
+    let url=new URL(input);
+    for(let hop=0;hop<=2;hop++) {
+      if(url.protocol!=='https:'||!hosts.has(url.hostname)||url.username||url.password)throw problem('unsupported redirect destination');
+      if(stats.catalogRequests>=30||Date.now()>=deadline)throw problem('request budget exhausted');
+      stats.catalogRequests++;
+      const response=await fetcher(url.toString(),{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'manual'});
+      if(![301,302,303,307,308].includes(response.status))return response;
+      const location=response.headers.get('location');
+      await response.body?.cancel();
+      if(!location)throw problem('redirect missing location');
+      if(hop===2)throw problem('too many redirects');
+      url=new URL(location,url);
+    }
+  };
+}
 async function refresh(env) {
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
@@ -165,11 +184,7 @@ async function refresh(env) {
     const selectionStats={build:RECOMMENDER_BUILD,target:12,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(),examined=new Set(),deadline=now+155000;
     // One refresh has a bounded request/time budget, including every replacement pool.
-    const fetchCatalog=async(url,options={})=>{
-      if(selectionStats.catalogRequests>=30||Date.now()>=deadline)throw Error('Catalog search budget exhausted');
-      selectionStats.catalogRequests++;
-      return (env.CATALOG_FETCH||fetch)(url,{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'error'});
-    };
+    const fetchCatalog=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline);
     for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
       const poolState={...state,rotation:state.rotation+pool};
       const anchors=tasteAnchors(poolState,usedSources);
@@ -180,6 +195,7 @@ async function refresh(env) {
         candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6});
       } catch(error) {
         poolStats.error=error.status===422?'no fresh candidates':'catalog unavailable';
+        poolStats.detail=error.message.slice(0,700);
         if(selectionStats.catalogRequests>=30)break;
         continue;
       }
@@ -205,7 +221,7 @@ async function refresh(env) {
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;
     }
-    if(picks.length<12)throw Object.assign(fail(422,`Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
+    if(picks.length<12)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     const at=Date.now();
     state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
     for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
-import worker,{aiReplyText,aiFailureDiagnostic} from '../backend/worker.mjs';
+import worker,{aiReplyText,aiFailureDiagnostic,budgetedCatalogFetch} from '../backend/worker.mjs';
 import {songKey} from '../ai-core.mjs';
 import {tasteAnchors,matchesArtist,credits,parseRelevantPicks} from '../backend/relevance.mjs';
 import starter from '../backend/starter.mjs';
@@ -203,7 +203,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'fresh-pools-12-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'fresh-pools-12-2');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -240,4 +240,39 @@ test('Exhausted provider requests stop within the shared budget and never invoke
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const error=await response.json();assert(requests<=30);assert.equal(error.selectionStats.catalogRequests,requests);
  assert(error.selectionStats.pools.length<=3);assert.equal(s.calls().aiCalls,0);assert.equal((await s.state()).batch,null);s.sqlite.close();
+});
+
+test('Catalog redirects use supported manual mode and each hop counts toward budget',async()=>{
+ const stats={catalogRequests:0},seen=[];
+ const request=budgetedCatalogFetch(async(url,options)=>{
+  assert.equal(options.redirect,'manual');seen.push(url);
+  if(seen.length===1)return new Response(null,{status:302,headers:{location:'/redirected-search'}});
+  return Response.json({results:[]});
+ },stats,Date.now()+10000);
+ assert.equal((await request('https://itunes.apple.com/search')).status,200);
+ assert.deepEqual(seen,['https://itunes.apple.com/search','https://itunes.apple.com/redirected-search']);assert.equal(stats.catalogRequests,2);
+});
+test('Redirect loops, foreign hosts and exhausted budgets stop without extra requests',async()=>{
+ for(const location of ['https://unexpected.example/search','https://itunes.apple.com/loop']) {
+  const stats={catalogRequests:0};
+  const request=budgetedCatalogFetch(async()=>new Response(null,{status:301,headers:{location}}),stats,Date.now()+10000);
+  await assert.rejects(request('https://itunes.apple.com/search'));
+  assert(stats.catalogRequests<=3);
+ }
+ const stats={catalogRequests:29};let calls=0;
+ const request=budgetedCatalogFetch(async()=>{calls++;return new Response(null,{status:302,headers:{location:'/again'}});},stats,Date.now()+10000);
+ await assert.rejects(request('https://itunes.apple.com/search'),/budget/);
+ assert.equal(calls,1);assert.equal(stats.catalogRequests,30);
+});
+test('A redirecting live-provider-shaped fixture generates twelve and provider errors remain visible',async()=>{
+ const s=setup(),original=s.env.CATALOG_FETCH;
+ s.env.CATALOG_FETCH=async(input,options)=>{
+  assert.equal(options.redirect,'manual');const url=new URL(input);
+  if(!url.searchParams.has('redirected')){url.searchParams.set('redirected','1');return new Response(null,{status:302,headers:{location:url.toString()}});}
+  return original(input,options);
+ };
+ assert.equal((await s.call('/refresh',{})).status,200);assert.equal((await s.state()).batch.items.length,12);
+ s.cooldown();s.env.CATALOG_FETCH=async()=>new Response('',{status:503});
+ const result=await (await s.call('/refresh',{})).json();assert.match(result.error,/Catalog requests failed/);
+ assert(result.selectionStats.pools.some(p=>p.detail.includes('HTTP 503')));s.sqlite.close();
 });
