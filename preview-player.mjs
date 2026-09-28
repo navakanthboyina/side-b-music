@@ -18,7 +18,7 @@ export function installPreviewPlayer(doc,win,lookup){
   const mine=++ticket;stop();panel.hidden=false;doc.body.classList.add('has-preview');source.hidden=true;source.removeAttribute('href');
   const song={artist:button.dataset.artist,title:button.dataset.title};panel.querySelector('.player-title').textContent=song.title;panel.querySelector('.player-artist').textContent=song.artist;status.textContent='Finding a Deezer preview…';
   try{
-   const {preview}=await lookup(song);if(mine!==ticket)return;
+   const {preview}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
    if(!preview){status.textContent='No matching Deezer preview available. Try the listening links.';return;}
    const u=new URL(preview.url),link=new URL(preview.link);
    if(u.protocol!=='https:'||u.username||u.password||u.port||!/^(?:[a-z0-9-]+\.)*(?:dzcdn\.net|deezer\.com)$/.test(u.hostname)||link.origin!=='https://www.deezer.com'||!/^\/track\/\d+$/.test(link.pathname))throw Error('Invalid preview');

@@ -107,3 +107,12 @@ Specific-language retrieval tries Apple metadata before Deezer. Explicit single-
 ### Compact ranking prompt (compact-selection-1)
 
 AI now sees only sequential candidate IDs. Provider track IDs, album IDs and reference IDs remain server-side for validation, removing an avoidable source of ID confusion. The prompt retains song, artist, release, reference and explicit language tag, with shorter instructions and no generated reasons. Retry context excludes cumulative score distributions. Drafts from `language-discovery-1` remain compatible because eligibility rules are unchanged. Timeout limits remain bounded; this reduces input size but cannot prevent provider outages or guarantee completion. Regression tests verify hidden provider IDs and resuming the previous build's draft.
+
+
+### Unrated repeats, comfort rotation, and search previews (comfort-replay-1)
+
+Unrated recommendations may now appear again even within 14 days. Shared likes, skips and Already know ratings still exclude a song from discovery; duplicate songs within a batch remain blocked. Playlist starting songs remain familiar and excluded from discovery. Compatible existing drafts are retained.
+
+Comfort mixes now show up to 12 songs from playlist seeds and shared likes, excluding skipped songs, split into two sets. Order rotates daily (UTC) and the shared Shuffle button advances the selection for everyone. It does not alter ratings or discard a pending recommendation draft. The selected comfort titles are publicly visible; the full seed list is not returned. Comfort mixes are familiar selections, not AI-generated discovery. POST `/comfort/shuffle` uses existing Origin and rate limits.
+
+Comfort rows and search results have Deezer preview controls. Search previews send the provider and ID for a server-side lookup and never add feedback. Deezer search IDs play that exact catalog preview. Apple results are verified by ID, then searched for a matching Deezer title/artist; a Deezer counterpart may not exist. Playback remains one browser-local player with vinyl animation. Add to taste remains a separate action. No migration or playlist re-import is needed.

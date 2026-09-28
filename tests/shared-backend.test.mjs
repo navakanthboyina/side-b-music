@@ -48,7 +48,7 @@ function setup(){
 }
 
 const fixture={artist:starter[0].name,title:starter[0].track};
-test('Shared batch, individual ratings, refresh cooldown and no repeats',async()=>{
+test('Shared batch, individual ratings, refresh cooldown and rated exclusions',async()=>{
  const s=setup();assert.equal((await s.call('/refresh',{})).status,200);const a=(await s.state()).batch;
  assert.equal(a.items.length,12);assert.equal(a.relevanceVersion,2);
  const song=a.items[0];await s.call('/feedback',{...song,rating:'replay'});
@@ -57,7 +57,7 @@ test('Shared batch, individual ratings, refresh cooldown and no repeats',async()
  assert.equal(Object.values((await s.state()).songRatings)[0].value,'skip');
  assert.equal((await s.call('/refresh',{})).status,409);s.cooldown();
  assert.equal((await s.call('/refresh',{})).status,200);const b=(await s.state()).batch;
- const keys=new Set(a.items.map(songKey));assert(b.items.every(t=>!keys.has(songKey(t))));s.sqlite.close();
+ assert(b.items.every(t=>songKey(t)!==songKey(song)));s.sqlite.close();
 });
 test('Catalog results unrelated to requested artist never reach AI',async()=>{
  const s=setup();s.env.CATALOG_FETCH=async url=>Response.json(new URL(url).hostname==='itunes.apple.com'?{results:[{artistName:'Unrelated Generic Artists',trackName:'Random Search Hit'}]}:{data:[]});
@@ -112,14 +112,14 @@ test('Concurrent feedback prevents stale AI overwrite',async()=>{
  await s.call('/feedback',{...fixture,rating:'known'});s.env.AI.run=async(model,input)=>({response:selection(input)});finish();assert.equal((await pending).status,409);
  assert.equal((await s.state()).batch,null);s.sqlite.close();
 });
-test('Owner import retains song-level taste privately; old batch hidden; migration needs re-import',async()=>{
+test('Owner import keeps full seed list private while exposing selected comfort songs',async()=>{
  const s=setup();const row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);delete row.seedSongs;row.batch={items:[{artist:'Legacy',title:'Unrelated'}]};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  assert.equal((await s.state()).needsTasteImport,true);assert.equal((await s.state()).batch,null);
  assert.equal((await s.call('/refresh',{})).status,409);
  const songs=[{artist:'Private Example',title:'Private Title'}];assert.equal((await s.call('/admin/seed',{songs})).status,401);
  assert.equal((await s.call('/admin/seed',{songs},{authorization:'Bearer test-owner-secret'})).status,200);
- const state=await s.state();assert.equal(state.needsTasteImport,false);assert(!JSON.stringify(state).includes('Private Title'));
+ const state=await s.state();assert.equal(state.needsTasteImport,false);assert.equal(state.seedSongs,undefined);assert.deepEqual(state.comfortSongs,songs);
  const data=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.deepEqual(data.seedSongs,songs);s.sqlite.close();
 });
 test('Origin, unknown song and daily cap gates remain enforced',async()=>{
@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'compact-selection-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'comfort-replay-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -364,7 +364,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'compact-selection-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'comfort-replay-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -568,4 +568,22 @@ test('AI prompt exposes only local candidate IDs, never provider or reference ID
  assert.equal(payload.candidates[0].id,1);assert.equal(payload.candidates[0].catalogLanguage,'Telugu');assert.equal(payload.candidates[0].release,'Release');assert.equal(payload.candidates[0].reference.title,'Reference');
  for(const id of ['998877','887766','776655'])assert(!JSON.stringify(messages).includes(id));
  assert(!JSON.stringify(payload).includes('candidateId'));assert.match(messages[0].content,/No prose/);
+});
+
+
+test('Previously shown unrated catalog songs remain eligible, rated songs stay excluded',async()=>{
+ const {collectEvidenceCandidates}=await import('../backend/evidence.mjs');const seed={artist:'Fixture Artist 0',title:'Anchor Song 0'};
+ const state={seedSongs:[seed],songRatings:{},familiar:{[songKey(seed)]:true},shown:{},rotation:0};
+ const first=await collectEvidenceCandidates(state,fixtureCatalog);first.forEach(t=>state.shown[songKey(t)]=Date.now());
+ const again=await collectEvidenceCandidates(state,fixtureCatalog);assert.equal(again.length,first.length);
+ state.songRatings[songKey(first[0])]={...first[0],value:'replay'};const rated=await collectEvidenceCandidates(state,fixtureCatalog);assert(!rated.some(t=>songKey(t)===songKey(first[0])));
+});
+test('Comfort shuffle is shared, uses playlist songs and preserves draft and ratings',async()=>{
+ const s=setup(),before=await s.state();assert.equal(before.comfortSongs.length,12);
+ const row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);row.pending={at:Date.now(),items:[],language:'Telugu',selectionStats:{build:'compact-selection-1'}};s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
+ const after=await (await s.call('/comfort/shuffle',{})).json();assert.notDeepEqual(after.comfortSongs,before.comfortSongs);assert.deepEqual(after.songRatings,before.songRatings);assert.equal(after.pendingLanguage,'Telugu');assert.deepEqual((await s.state()).comfortSongs,after.comfortSongs);s.sqlite.close();
+});
+test('Search preview uses server-verified catalog ID without adding feedback',async()=>{
+ const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async url=>{assert.equal(String(url),'https://api.deezer.com/track/42');return Response.json({id:42,artist:{name:'Found Artist'},title:'Found Song',preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'});};
+ const r=await (await s.call('/preview',{provider:'deezer',id:42,artist:'Forged',title:'Ignored'})).json();assert.equal(r.preview.link,'https://www.deezer.com/track/42');assert.deepEqual((await s.state()).songRatings,before.songRatings);assert.equal((await s.state()).revision,before.revision);s.sqlite.close();
 });

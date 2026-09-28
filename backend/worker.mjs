@@ -1,12 +1,13 @@
+import {comfortSongs} from './comfort.mjs';
 import {prioritizeLanguageReferences} from './language-discovery.mjs';
-import {findPreview} from './preview.mjs';
+import {findPreview,safePreviewUrl} from './preview.mjs';
 import {LANGUAGES,languageSelection} from './languages.mjs';
 import {collectEvidenceCandidates as collectCandidates, memoizedCatalogFetch} from './evidence.mjs';
 import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'compact-selection-1';
+export const RECOMMENDER_BUILD = 'comfort-replay-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -24,7 +25,7 @@ async function read(db) {
 }
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
-    batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
+    comfortSongs:comfortSongs(row.state), comfortShuffle:true, batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
@@ -63,7 +64,7 @@ async function ipLimit(request, db) {
   await limited(db, `feedback:${hash}`, 30, now + 120000);
 }
 function knownSongs(state) {
-  return [...starter.map(a=>({artist:a.name,title:a.track})), ...(state.batch?.items || []), ...Object.values(state.songRatings)];
+  return [...starter.map(a=>({artist:a.name,title:a.track})), ...(state.seedSongs||[]), ...(state.batch?.items || []), ...Object.values(state.songRatings)];
 }
 export {collectEvidenceCandidates as collectCandidates} from './evidence.mjs';
 export function aiReplyText(result) {
@@ -135,7 +136,7 @@ async function refresh(env,language='Mixed') {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
@@ -281,11 +282,25 @@ export default {
           s.pending=null;
         }));
       }
-      if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add','/preview'].includes(path))throw fail(404,'Not found.');
+      if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add','/preview','/comfort/shuffle'].includes(path))throw fail(404,'Not found.');
       if(origin!==env.ALLOWED_ORIGIN)throw fail(403,'Use the dashboard to update the shared profile.');
       const body=await bodyOf(request);
       if(path==='/refresh'){const language=languageSelection(body.languages??body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
+      if(path==='/comfort/shuffle'){await ipLimit(request,env.DB);return reply(await mutate(env.DB,s=>{s.comfortRotation=(Number(s.comfortRotation)||0)+1;}));}
       if(path==='/preview') {
+        if(body.provider!==undefined){
+          if(!['apple','deezer'].includes(body.provider)||!Number.isSafeInteger(body.id)||body.id<=0)throw fail(400,'Choose a catalog search result.');
+          await ipLimit(request,env.DB);
+          const get=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000);
+          try{
+            const url=body.provider==='deezer'?'https://api.deezer.com/track/'+body.id:'https://itunes.apple.com/lookup?id='+body.id+'&entity=song';
+            const response=await get(url);if(!response.ok)throw Error();const data=await response.json();
+            const raw=body.provider==='deezer'?data:data.results?.find(t=>t.trackId===body.id),song=catalogSong(body.provider,raw);
+            if(!song||song.id!==body.id)throw Error();
+            return reply({preview:body.provider==='deezer'?(safePreviewUrl(raw.preview)?{url:safePreviewUrl(raw.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+song.id}:null):await findPreview(song,get)});
+          }catch{throw fail(503,'Could not load this catalog preview. Try the listening links.');}
+        }
+
         const song=cleanSong(body),row=await read(env.DB);
         if(!knownSongs(row.state).some(t=>songKey(t)===songKey(song)))throw fail(400,'Choose a song from the shared dashboard.');
         await ipLimit(request,env.DB);

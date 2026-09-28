@@ -37,7 +37,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     $('#draft-label').textContent=`${shared?.pendingSongCount||0} of 12 next picks ready`;
     $('#view-plan .page-heading .muted').textContent=songs.length===12?'Six songs each week from the complete shared batch.':`${songs.length} songs in the previous batch, split across both weeks while the next 12-song batch is prepared.`;
     $('#feed').innerHTML=songs.map(card).join('')||'<p class="empty">No recommendations from the updated taste model yet. Complete playlist setup, then refresh.</p>';
-    $('#feed-badge').textContent=batch?'SHARED AI · 14-DAY NO REPEATS':'AWAITING RELEVANT PICKS';
+    $('#feed-badge').textContent=batch?'SHARED AI · YOUR FEEDBACK COUNTS':'AWAITING RELEVANT PICKS';
     $('#feed-status').textContent=batch?`${songs.length} ${songs.length===1?'song':'songs'} · saved ${new Date(batch.at).toLocaleString()} · ${batch.language||'Mixed'} mix`:'Earlier batches are hidden because they used the old relevance rules.';
     $('.week-tabs').innerHTML=[1,2].map(n=>`<button data-shared-week="${n}" aria-pressed="${week===n}">Week ${n}<span>${esc(batch?.language||'Mixed')} mix</span></button>`).join('');
     $('#week-title').textContent=`Week ${week} · the shared mix`;
@@ -49,7 +49,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
     $('#shared-likes').textContent=String(ratings.filter(r=>r.value==='replay').length);
     $('#shared-ratings').innerHTML=ratings.map(t=>`<div class="rating-row"><div><strong>${esc(t.title)}</strong> · ${esc(t.artist)}<br><span>${({replay:'More songs like this',skip:'Exclude this song',known:'Already known'})[t.value]||''}</span></div><button class="secondary" data-shared-rating="clear" data-artist="${esc(t.artist)}" data-title="${esc(t.title)}">Clear for everyone</button></div>`).join('')||'<p>No shared feedback yet. Rate a song in Discover.</p>';
     $('.side-sources .small').textContent=shared?.seedSongCount?`${shared.seedSongCount} playlist songs guide catalog discovery. No Spotify sync.`:'Playlist starting taste has not been uploaded by the owner yet.';
-    renderSearch();controls();
+    renderComfort();renderSearch();controls();
   }
   function navigate(){
     const hash=win.location.hash.slice(1),view=['discover','plan','comfort','profile'].includes(hash)?hash:'discover';
@@ -73,7 +73,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   $('#view-discover .page-heading .eyebrow').textContent='THE DISCOVERY EDIT';
   $('.topbar .small').textContent='Independent ears. Shared discoveries.';
   $('.feature-panel').hidden=true;$('#ai-diagnostics').hidden=true;
-  $('#basis').textContent='Shared feedback applies to individual songs. Recent recommendations stay excluded for 14 days across every browser.';
+  $('#basis').textContent='Shared feedback applies to individual songs. Unrated recommendations can return. Liked, skipped and already-known songs stay excluded from discovery.';
   $('.side-bottom .small').textContent='Shared across all browsers';
   $('[data-view="profile"]').textContent='Shared taste';
   $('.side-sources .text-link').textContent='Shared taste & song feedback →';
@@ -83,12 +83,17 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   $('#view-plan h1').textContent='Our two-week plan.';
   $('#view-plan .page-heading .muted').textContent='Six songs each week from a complete shared batch.';
   $('#today').textContent=new Date().toLocaleDateString();
-  $('#comfort-mixes').innerHTML=data.mixes.map(m=>`<article class="mix"><div class="mix-head"><h2>${esc(m.title)}</h2><p>${esc(m.note)}</p></div><ol>${m.tracks.map(([a,t])=>`<li><div><strong>${esc(t)}</strong><span>${esc(a)}</span></div><a href="${search(a,t)}" target="_blank" rel="noopener noreferrer">Play ↗</a></li>`).join('')}</ol></article>`).join('');
+  function renderComfort(){
+    const songs=shared?.comfortSongs||[];
+    $('#comfort-mixes').innerHTML=`<p class="notice">Familiar songs from our playlists and shared likes. Rotates daily, or shuffle now for everyone. These mixes are not AI recommendations.</p><button class="secondary" id="shuffle-comfort" ${busy||!shared?.comfortShuffle?'disabled':''}>Shuffle comfort mixes ↻</button>`+[0,1].map((n)=>`<article class="mix"><div class="mix-head"><h2>${n?'Another familiar turn':'Back to our favorites'}</h2><p>A rotating selection from our shared taste.</p></div><ol>${songs.slice(n*6,n*6+6).map(t=>`<li><div><strong>${esc(t.title)}</strong><span>${esc(t.artist)}</span></div><button class="secondary" data-preview data-artist="${esc(t.artist)}" data-title="${esc(t.title)}">▶ Preview</button><a href="${search(t.artist,t.title)}" target="_blank" rel="noopener noreferrer">Listen ↗</a></li>`).join('')}</ol></article>`).join('');
+  }
+  $('#comfort-mixes').addEventListener('click',async e=>{if(!e.target.closest('#shuffle-comfort')||busy||!shared?.comfortShuffle)return;busy=true;renderComfort();controls();try{accept(await request('/comfort/shuffle',{}));}catch(error){status(error.message);}finally{busy=false;renderComfort();controls();}});
+
   const searchStatus=text=>{$('#song-search-status').textContent=text;};
   function renderSearch(){
     $('#song-search-results').innerHTML=searchResults.map((t,i)=>{
       const added=shared?.songRatings[key(t)]?.value==='replay';
-      return `<div class="rating-row"><div><strong>${esc(t.title)}</strong><br>${esc(t.artist)}</div><button class="secondary" data-add-taste="${i}" ${added?'disabled':''}>${added?'Added':'Add to taste'}</button></div>`;
+      return `<div class="rating-row"><div><strong>${esc(t.title)}</strong><br>${esc(t.artist)}</div><button class="secondary" data-preview data-provider="${esc(t.provider)}" data-id="${t.id}" data-artist="${esc(t.artist)}" data-title="${esc(t.title)}">▶ Preview · 30 sec</button><button class="secondary" data-add-taste="${i}" ${added?'disabled':''}>${added?'Added':'Add to taste'}</button></div>`;
     }).join('');
   }
   $('#song-search').addEventListener('submit',async event=>{

@@ -9,7 +9,7 @@ const error=(status,message)=>Object.assign(Error(message),{status});
 export async function collectEvidenceCandidates(state,fetchCatalog,options={}) {
  const anchors=options.anchors||tasteAnchors(state),used=options.usedSources||new Set();
  const selected=anchors.filter(a=>!used.has(songKey(a))).slice(0,options.sourceLimit||6);
- const excluded=new Set([...(options.excluded||[]),...Object.keys(state.familiar),...Object.keys(state.songRatings),...Object.entries(state.shown).filter(([,at])=>Date.now()-at<14*86400000).map(([key])=>key)]);
+ const excluded=new Set([...(options.excluded||[]),...Object.keys(state.familiar),...Object.keys(state.songRatings)]);
  const json=async url=>{const r=await fetchCatalog(url);if(!r.ok)throw Error('HTTP '+r.status);const data=await r.json();if(data.error)throw Error('Catalog error');return data;};
  let failures=0;const reasons=new Set(),seen=new Set(),out=[];
  for(let offset=0;offset<selected.length;offset+=3){
