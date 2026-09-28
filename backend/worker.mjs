@@ -7,7 +7,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'comfort-replay-1';
+export const RECOMMENDER_BUILD = 'reference-cache-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -126,6 +126,7 @@ export function inferenceFailure(error) {
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
 async function refresh(env,language='Mixed') {
+  let referenceCache,cacheSaved=false;
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
   if (!locked.meta.changes) throw fail(409, 'A shared batch is generating, or refresh is cooling down. Wait a minute and check again.');
@@ -136,11 +137,12 @@ async function refresh(env,language='Mixed') {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
-    const referenceQueue=language==='Mixed'?null:await prioritizeLanguageReferences(tasteAnchors(state,new Set(),64),language,input=>env.AI.run(MODEL,input),selectionStats,Math.min(20000,deadline-Date.now()));
+    referenceCache=state.referenceLanguageCache||{};state.referenceLanguageCache=referenceCache;
+    const referenceQueue=language==='Mixed'?null:await prioritizeLanguageReferences(tasteAnchors(state,usedSources,64),language,input=>env.AI.run(MODEL,input),selectionStats,Math.min(20000,deadline-Date.now()),referenceCache);
     // One refresh has a bounded request/time budget, including every replacement pool.
     const fetchCatalog=memoizedCatalogFetch(budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline));
     for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
@@ -210,8 +212,11 @@ async function refresh(env,language='Mixed') {
     }
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
+    cacheSaved=true;
     return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. After the cooldown, refresh to find the remaining ${12-picks.length}. The visible batch has not changed.`};
-  } finally { await query(env.DB,'UPDATE community SET lease=NULL,lease_until=0 WHERE id=1 AND lease=?',lease).run(); }
+  } finally {
+    if(referenceCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.referenceLanguageCache',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(referenceCache),lease).run();
+    await query(env.DB,'UPDATE community SET lease=NULL,lease_until=0 WHERE id=1 AND lease=?',lease).run(); }
 }
 function catalogSong(provider,t) {
   if(!t)return null;

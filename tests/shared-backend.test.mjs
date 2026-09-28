@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'comfort-replay-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'reference-cache-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -549,8 +549,8 @@ test('Explicit Telugu catalog tags can qualify tracks when the ranker returns Un
 });
 test('Reference classifier prioritizes matching songs without copying estimates onto candidates',async()=>{
  const {prioritizeLanguageReferences}=await import('../backend/language-discovery.mjs');const anchors=Array.from({length:20},(_,i)=>({id:i+1,artist:'Artist '+i,title:'Song '+i})),stats={};
- const out=await prioritizeLanguageReferences(anchors,'Telugu',async()=>({response:{picks:[{id:18,language:'Telugu'},{id:19,language:'Hindi'},{id:99,language:'Telugu'}]}}),stats);
- assert.equal(out[0].id,18);assert.equal(out.length,20);assert.equal(stats.referenceLanguages.matching,1);assert.equal(out[0].language,undefined);
+ const out=await prioritizeLanguageReferences(anchors,'Telugu',async input=>({response:{picks:JSON.parse(input.messages[1].content).candidates.map(t=>({id:t.id,language:t.title==='Song 13'?'Telugu':'Unknown'}))}}),stats);
+ assert.equal(out[0].id,14);assert.equal(out.length,20);assert.equal(stats.referenceLanguages.matching,1);assert.equal(out[0].language,undefined);
  const bad={};assert.deepEqual(await prioritizeLanguageReferences(anchors,'Telugu',async()=>({response:'broken'}),bad),anchors);assert(bad.referenceLanguages.error);
 });
 test('Broad genres, ambiguous tags and instrumental titles cannot supply a Telugu label',async()=>{
@@ -586,4 +586,22 @@ test('Comfort shuffle is shared, uses playlist songs and preserves draft and rat
 test('Search preview uses server-verified catalog ID without adding feedback',async()=>{
  const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async url=>{assert.equal(String(url),'https://api.deezer.com/track/42');return Response.json({id:42,artist:{name:'Found Artist'},title:'Found Song',preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'});};
  const r=await (await s.call('/preview',{provider:'deezer',id:42,artist:'Forged',title:'Ignored'})).json();assert.equal(r.preview.link,'https://www.deezer.com/track/42');assert.deepEqual((await s.state()).songRatings,before.songRatings);assert.equal((await s.state()).revision,before.revision);s.sqlite.close();
+});
+
+
+test('Small reference batches retain successful labels when another batch fails, and reuse cache',async()=>{
+ const {prioritizeLanguageReferences}=await import('../backend/language-discovery.mjs');const anchors=Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Song '+i})),cache={},stats={};let calls=0;
+ const run=async input=>{calls++;const c=JSON.parse(input.messages[1].content).candidates;assert(c.length<=8);if(c[0].title==='Song 8')return {response:'broken json'};return {response:{picks:c.map(t=>({id:t.id,language:'Telugu'}))}};};
+ await prioritizeLanguageReferences(anchors,'Telugu',run,stats,100,cache);assert.equal(calls,2);assert.equal(Object.keys(cache).length,8);assert.equal(stats.referenceLanguages.batches[1].error,'invalid_json');
+ const next={};await prioritizeLanguageReferences(anchors,'Telugu',run,next,100,cache);assert.equal(calls,3);assert.equal(next.referenceLanguages.cached,8);
+ const failed={};await prioritizeLanguageReferences(anchors.slice(8),'Telugu',()=>new Promise(()=>{}),failed,1,{});assert.equal(failed.referenceLanguages.batches[0].error,'timeout');
+});
+test('Language cache survives a refresh with no approved candidates',async()=>{
+ const s=setup();s.env.AI.run=async()=>({response:{picks:[]}});await s.call('/refresh',{language:'Telugu'});
+ const state=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(Object.keys(state.referenceLanguageCache).length,16);assert.equal((await s.state()).refreshing,false);assert.equal((await s.state()).referenceLanguageCache,undefined);s.sqlite.close();
+});
+test('Seven-song comfort-replay draft resumes without dropping approved songs',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,7):[]}});
+ await s.call('/refresh',{});const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(stored.pending.items.length,7);const keys=new Set(stored.pending.items.map(songKey));stored.pending.selectionStats.build='comfort-replay-1';s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(stored));
+ s.cooldown();s.env.AI.run=async(model,input)=>({response:selection(input)});const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.selectionStats.resumedCount,7);assert.equal(r.batch.items.filter(t=>keys.has(songKey(t))).length,7);s.sqlite.close();
 });

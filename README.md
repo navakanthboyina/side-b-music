@@ -121,3 +121,10 @@ Comfort rows and search results have Deezer preview controls. Search previews se
 ### Two-day plan and section navigation
 
 The shared plan now divides the saved 12-song batch into Day 1 and Day 2, six songs per day. This changes the listening plan labels, not the refresh schedule or saved batch. Section links, repeated clicks on the active section, and browser back/forward open the selected section at the top and move keyboard focus to its heading. Removed the requested long setup/privacy notice from Shared taste. This is a frontend-only update; no Worker deployment is needed.
+
+
+### Small reference batches and cache (reference-cache-1)
+
+Language-specific discovery classifies at most 16 uncached references in two concurrent groups of eight, with a 20-second timeout per group and 500 output tokens. Successful individual labels are retained independently of other group failures. Cached labels are used only to prioritize reference searches, not to label recommended songs. Unknown and malformed labels are not cached. Cache lifetime is 30 days, capped at 512 entries, stored privately in existing D1 JSON without migration. Successful labels survive refreshes that fail to produce picks; this metadata-only write preserves concurrent song feedback.
+
+`referenceLanguages` diagnostics include cached coverage, matches, per-group accepted/unknown/invalid counts, and sanitized failure categories (`timeout`, `invalid_json`, `missing_picks_array`, `provider_error`) with numeric provider codes when available. No generated song text is logged. Existing comfort-replay, compact-selection and language-discovery drafts remain compatible. The existing request deadline and selection limits remain; live AI or catalog availability can still prevent a full batch.
