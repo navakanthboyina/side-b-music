@@ -63,7 +63,7 @@ export async function startShared({apiBase},data,doc=document,win=window) {
   async function sync(){
     if(busy||polling||doc.hidden)return;
     polling=true;
-    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.pendingSongCount?`${shared.pendingSongCount}/${shared.batchTarget||12} approved songs saved in the shared draft. Refresh after the cooldown to continue filling it.`:shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Your shared mix is ready. Press play, find a favorite, make it yours.');}
+    try{accept(await request('/state'));status(shared.recommenderVersion!==2?'The owner needs to deploy the updated recommendation backend.':shared.needsTasteImport?'The owner needs to re-import the playlists once to enable song-level taste.':shared.pendingSongCount?`${shared.pendingSongCount}/${shared.batchTarget||12} approved songs saved in the shared draft. ${shared.pendingSelectionStats?.stopReason==='both_catalogs_paused'?'Both catalogs failed on the last attempt. Your draft is safe; '+(shared.pendingSelectionStats.catalogErrors||[]).slice(-2).map(e=>e.host+': '+(e.status||e.category)).join('; '):'Refresh after the cooldown to continue filling it.'}`:shared.refreshing?'Someone is generating the next shared batch. Current picks stay available.':'Your shared mix is ready. Press play, find a favorite, make it yours.');}
     catch{status('Shared service unavailable. Showing the last loaded picks; feedback has not been saved locally.');}
     finally{polling=false;}
   }

@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-search-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'catalog-recovery-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -280,7 +280,7 @@ test('A redirecting live-provider-shaped fixture generates twelve and provider e
   return original(input,options);
  };
  assert.equal((await s.call('/refresh',{})).status,200);assert.equal((await s.state()).batch.items.length,12);
- s.cooldown();s.env.CATALOG_FETCH=async()=>new Response('',{status:503});
+ s.cooldown();s.sqlite.exec("UPDATE community SET data=json_remove(data,'$.catalogCache')");s.env.CATALOG_FETCH=async()=>new Response('',{status:503});
  const result=await (await s.call('/refresh',{})).json();assert.match(result.error,/Catalog requests failed/);
  assert(result.selectionStats.pools.some(p=>p.detail.includes('HTTP 503')));s.sqlite.close();
 });
@@ -620,4 +620,24 @@ test('Language search alternates preferences and rejects untagged, unrelated and
  const state={rotation:0,familiar:{},songRatings:{[songKey({artist:'Artist A',title:'Rated'})]:{value:'replay'}}};
  const get=async url=>{const term=new URL(url).searchParams.get('term');queries.push(term);const l=term.startsWith('Telugu')?'Telugu':'Hindi',artist=term.slice(l.length+1);return Response.json({results:[['Good',artist,l],['Untagged',artist,'Pop'],['Unrelated','Random artist',l],['Rated',artist,l]].map(([title,a,g],i)=>({trackId:i+1,artistName:a,trackName:title,collectionId:5,collectionName:'Release',primaryGenreName:g}))});};
  const stats={};const songs=await searchLanguageCandidates(state,get,{anchors,language:'Telugu + Hindi',stats});assert.deepEqual(queries,['Telugu Artist A','Hindi Artist B']);assert(!songs.some(t=>t.title==='Untagged'||t.title==='Unrelated'||(t.title==='Rated'&&t.artist==='Artist A')));assert.equal(stats.languageSearch.wrongArtist,2);assert.equal(stats.languageSearch.unverifiedLanguage,2);
+});
+
+
+test('Catalog cache serves fresh and stale successes but never caches errors',async()=>{
+ const {cachedCatalogFetch}=await import('../backend/catalog-cache.mjs');let now=1000,calls=0,fail=false;const cache={},stats={};
+ const get=cachedCatalogFetch(async()=>{calls++;return fail?new Response('',{status:429}):Response.json({data:[{id:1}]});},cache,stats,()=>now);
+ await get('https://api.deezer.com/search?q=test');fail=true;await get('https://api.deezer.com/search?q=test');assert.equal(calls,1);assert.equal(stats.catalogCacheHits,1);
+ now+=2*86400000;const fallback=await get('https://api.deezer.com/search?q=test');assert.equal(fallback.status,200);assert.equal(stats.catalogStaleHits,1);
+ const bad=await get('https://api.deezer.com/search?q=other');assert.equal(bad.status,429);assert.equal(Object.keys(cache).length,1);
+ now+=8*86400000;assert.equal((await get('https://api.deezer.com/search?q=test')).status,429);
+});
+test('Catalog outage stops after one pool and reports sanitized HTTP status without losing draft',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,7):[]}});await s.call('/refresh',{});
+ const saved=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(saved.pending.items.length,7);saved.pending.selectionStats.build='language-search-1';delete saved.catalogCache;s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(saved));s.cooldown();
+ s.env.CATALOG_FETCH=async()=>new Response('private provider body',{status:429});const r=await (await s.call('/refresh',{})).json();assert.equal(r.pendingSongCount,7);assert.equal(r.pendingSelectionStats.pools.length,1);assert.equal(r.pendingSelectionStats.stopReason,'both_catalogs_paused');assert(r.pendingSelectionStats.catalogErrors.every(e=>e.status===429));assert(!JSON.stringify(r).includes('private provider body'));assert.match(r.message,/Both music catalogs failed/);s.sqlite.close();
+});
+test('Network exceptions count toward provider circuit and expose safe category',async()=>{
+ const stats={catalogRequests:0};const get=budgetedCatalogFetch(async()=>{throw Object.assign(Error('private query'),{name:'TimeoutError'});},stats,Date.now()+10000);
+ for(let i=0;i<4;i++)await assert.rejects(get('https://api.deezer.com/search?q=private'));
+ assert.equal(stats.catalogRequests,3);assert.equal(stats.providerFailures['api.deezer.com'],3);assert.equal(stats.catalogErrors[0].category,'timeout');assert(!JSON.stringify(stats).includes('private'));
 });

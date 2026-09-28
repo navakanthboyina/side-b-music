@@ -1,3 +1,4 @@
+import {cachedCatalogFetch} from './catalog-cache.mjs';
 import {searchLanguageCandidates} from './language-search.mjs';
 import {comfortSongs} from './comfort.mjs';
 import {prioritizeLanguageReferences} from './language-discovery.mjs';
@@ -8,7 +9,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'language-search-1';
+export const RECOMMENDER_BUILD = 'catalog-recovery-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -89,6 +90,7 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
 }
 export function budgetedCatalogFetch(fetcher,stats,deadline) {
   const hosts=new Set(['itunes.apple.com','api.deezer.com']),failures=new Map();
+  const record=(host,category,status)=>{failures.set(host,(failures.get(host)||0)+1);stats.providerFailures={...(stats.providerFailures||{}),[host]:failures.get(host)};const list=stats.catalogErrors||(stats.catalogErrors=[]);if(list.length<12)list.push({host,category,...(status?{status}:{})});};
   const problem=code=>Object.assign(new Error(code),{catalogCode:code});
   return async(input,options={})=>{
     let url=new URL(input);
@@ -99,8 +101,10 @@ export function budgetedCatalogFetch(fetcher,stats,deadline) {
       stats.catalogRequests++;
       let response;
       try {response=await fetcher(url.toString(),{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'manual'});}
-      catch(error){failures.set(url.hostname,(failures.get(url.hostname)||0)+1);throw error;}
-      if(response.status>=400){failures.set(url.hostname,(failures.get(url.hostname)||0)+1);stats.providerFailures={...(stats.providerFailures||{}),[url.hostname]:failures.get(url.hostname)};}
+      catch(error){record(url.hostname,/timeout|abort/i.test(String(error?.name)+' '+String(error?.message))?'timeout':'network_error');throw problem('catalog network request failed');}
+      if(response.status>=400)record(url.hostname,'http_error',response.status);
+      else if(response.status===200){try{const data=await response.clone().json();if(data?.error){record(url.hostname,'api_error');}}catch{record(url.hostname,'invalid_json');}}
+
 
       if(![301,302,303,307,308].includes(response.status))return response;
       const location=response.headers.get('location');
@@ -127,7 +131,7 @@ export function inferenceFailure(error) {
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
 async function refresh(env,language='Mixed') {
-  let referenceCache,cacheSaved=false;
+  let referenceCache,catalogCache,cacheSaved=false;
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
   if (!locked.meta.changes) throw fail(409, 'A shared batch is generating, or refresh is cooling down. Wait a minute and check again.');
@@ -138,14 +142,16 @@ async function refresh(env,language='Mixed') {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
     referenceCache=state.referenceLanguageCache||{};state.referenceLanguageCache=referenceCache;
     const referenceQueue=language==='Mixed'?null:await prioritizeLanguageReferences(tasteAnchors(state,usedSources,64),language,input=>env.AI.run(MODEL,input),selectionStats,Math.min(20000,deadline-Date.now()),referenceCache);
     // One refresh has a bounded request/time budget, including every replacement pool.
-    const fetchCatalog=memoizedCatalogFetch(budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline));
+    catalogCache=state.catalogCache||{};state.catalogCache=catalogCache;
+    const fetchCatalog=memoizedCatalogFetch(cachedCatalogFetch(budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline),catalogCache,selectionStats));
+    const providersPaused=()=>['itunes.apple.com','api.deezer.com'].every(h=>(selectionStats.providerFailures?.[h]||0)>=3);
     for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
       const poolState={...state,rotation:state.rotation+pool};
       const capped=new Set([...new Set(picks.map(t=>norm(t.artist)))].filter(a=>picks.filter(t=>norm(t.artist)===a).length>=2));
@@ -162,7 +168,7 @@ async function refresh(env,language='Mixed') {
       } catch(error) {
         poolStats.error=error.status===422?'no fresh candidates':'catalog unavailable';
         poolStats.detail=error.message.slice(0,700);
-        if(selectionStats.catalogRequests>=30)break;
+        if(selectionStats.catalogRequests>=30||providersPaused()){selectionStats.stopReason=providersPaused()?'both_catalogs_paused':'catalog_budget';break;}
         continue;
       }
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
@@ -196,7 +202,7 @@ async function refresh(env,language='Mixed') {
         messages.push({role:'user',content:`Last pass: ${stats.formatError||stats.error||'incomplete coverage'}. Rejections: ${JSON.stringify(stats.rejected||{})}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${remainingIds.join(',')}. Use supplied release evidence even for songs you do not recognize. JSON only: {"picks":[{"id":1,"score":80,"language":"actual sung language or Unknown"}]}. EVERY entry must include id, score and language. Missing or invalid language fields must be corrected; never assume a song matches the requested language. Return wrong-language and Unknown labels too, so the server can validate them. Never invent IDs. Do not stop after the first match.`});
       }
       poolStats.accepted=picks.length-before;
-      if(selectionStats.catalogRequests>=30)break;
+      if(selectionStats.catalogRequests>=30||providersPaused()){selectionStats.stopReason=providersPaused()?'both_catalogs_paused':'catalog_budget';break;}
     }
     if(!picks.length&&selectionStats.attempts.length&&selectionStats.attempts.every(a=>a.error==='inference failed'))throw Object.assign(fail(503,selectionStats.attempts.at(-1).inference.detail+' No AI selections were returned. Previous picks remain saved.'),{selectionStats});
     if(!picks.length&&language!=='Mixed'&&selectionStats.attempts.length){
@@ -217,9 +223,10 @@ async function refresh(env,language='Mixed') {
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
     cacheSaved=true;
-    return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. After the cooldown, refresh to find the remaining ${12-picks.length}. The visible batch has not changed.`};
+    return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. ${providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
   } finally {
     if(referenceCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.referenceLanguageCache',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(referenceCache),lease).run();
+    if(catalogCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.catalogCache',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(catalogCache),lease).run();
     await query(env.DB,'UPDATE community SET lease=NULL,lease_until=0 WHERE id=1 AND lease=?',lease).run(); }
 }
 function catalogSong(provider,t) {
