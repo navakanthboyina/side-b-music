@@ -30,8 +30,16 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   }
   d.requests++;
   try{
-   const r=await fetcher(url,{redirect:'error',signal:AbortSignal.timeout(8000),headers:{Accept:'application/json',...(provider==='MusicBrainz'?{'User-Agent':'MunnasGrooves/2.0 (https://github.com/navakanthboyina/side-b-music)'}:{})}});
-   const body=await r.json();
+   const r=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(8000),headers:{Accept:'application/json',...(provider==='MusicBrainz'?{'User-Agent':'MunnasGrooves/2.0 (https://github.com/navakanthboyina/side-b-music)'}:{})}});
+   // Workers supports manual/follow only. Never follow a credential-bearing URL.
+   if(r.status>=300&&r.status<400){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'redirect_blocked',status:r.status});return null;}
+   let body;try{body=await r.json();}catch{
+    cache.backoff[provider]=now()+(r.status===429||r.status===503?300000:60000);
+    d.errors.push({provider,category:r.ok?'invalid_json':'http_error',status:r.status});return null;
+   }
+   if(!body||typeof body!=='object'){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'invalid_response',status:r.status});return null;}
+   // A missing reference track is not a provider outage. Continue with other taste songs.
+   if(provider==='Last.fm'&&[6,7].includes(body.error))return {body:{similartracks:{track:[]}},ttl:3600000};
    if(!r.ok||body.error){
     const rate=r.status===429||r.status===503||body.error===29;
     const retry=r.headers.get('retry-after'),seconds=Number(retry);
@@ -42,7 +50,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
    const cc=r.headers.get('cache-control')||'';
    const maxAge=cc.match(/(?:^|,)\s*max-age=(\d+)/i);
    return {body,ttl:/no-store|no-cache/i.test(cc)?0:maxAge?Math.min(7*DAY,Number(maxAge[1])*1000):DAY};
-  }catch{cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'network_or_response'});return null;}
+  }catch(error){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:['TimeoutError','AbortError'].includes(error?.name)?'timeout':'network_or_request',errorName:['TypeError','Error','TimeoutError','AbortError'].includes(error?.name)?error.name:'Error'});return null;}
  }
  const active=new Map([...(state.seedSongs||[]),...Object.values(state.songRatings||{}).filter(t=>t.value==='replay')].filter(t=>!state.songRatings?.[songKey(t)]||state.songRatings[songKey(t)].value==='replay').map(t=>[songKey(t),t]));
  const denied=t=>excluded.has(songKey(t))||!!state.songRatings?.[songKey(t)]||!!state.familiar?.[songKey(t)]||(state.seedSongs||[]).some(s=>songKey(s)===songKey(t));
@@ -72,7 +80,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   const response=await get(u.href,'Last.fm');if(!response)continue;
   const raw=response.body.similartracks?.track;
   if(!Array.isArray(raw)){d.errors.push({provider:'Last.fm',category:'invalid_shape'});continue;}
-  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number(t.match)>0&&Number(t.match)<=1).map(t=>({artist:t.artist.name.trim(),title:t.name.trim(),id:songKey({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
+  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number.isFinite(Number(t.match))&&Number(t.match)>0).map(t=>({artist:t.artist.name.trim(),title:t.name.trim(),id:songKey({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
   // Responses that prohibit reuse can serve this request, but never enter the source cache.
   if(response.ttl>0)cache.queries[key]={until:now()+response.ttl,tracks};
   else transient[key]={until:deadline+1,tracks};

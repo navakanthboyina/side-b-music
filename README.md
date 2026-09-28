@@ -182,3 +182,11 @@ To disable the new engine, run `npx wrangler secret delete LASTFM_PUBLIC_APPROVE
 Automated tests use synthetic provider fixtures and real SQLite state operations. They cover a complete 12-song cache-backed AI batch, preserving seven approved songs, rating exclusions, multiple work languages, rejecting release-text language and AI guesses, recording identity mismatches, cache reuse, persistent 429 backoff, no-store, secret redaction and activation gating. Existing preview/UI and Worker runtime checks also apply.
 
 A real Last.fm key and approval were not available during implementation. Actual Last.fm catalog coverage, MusicBrainz coverage for these playlists, Cloudflare egress and live AI latency therefore still require deployment validation. This integration cannot honestly guarantee 12 qualifying songs in every language on every refresh. Missing metadata is exposed rather than guessed.
+
+### Cloudflare discovery request fix (discovery-runtime-2)
+
+A live refresh on `saved-discovery-1` preserved seven draft songs but failed before contacting Last.fm. Reproduction in Cloudflare's workerd runtime identified `redirect: 'error'` as unsupported. Discovery now uses `redirect: 'manual'` and rejects redirect responses without forwarding the API key. The earlier runtime check covered only the legacy catalog wrapper; a new check bundles and executes the actual song-discovery module in workerd.
+
+Diagnostics now distinguish blocked redirects, HTTP failures, invalid JSON, timeouts and other request/network errors without exposing URLs, keys or provider response bodies. A Last.fm track-not-found result does not pause the whole provider. Positive finite Last.fm match values above 1 are accepted as source ranking values (not probabilities). Existing saved-discovery drafts remain compatible. No new secrets, migration or playlist import are needed.
+
+Validation: 89 automated Node tests pass, including redirected key protection, non-JSON HTTP errors and missing-reference recovery. Both catalog and actual discovery request checks pass in workerd. Deploy this build before another live refresh; these checks do not establish live provider availability or playlist coverage.

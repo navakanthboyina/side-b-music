@@ -52,3 +52,29 @@ test('Wrong recording identity and HTTP no-store never enter a verified pool',as
  const g=fixture();g.env.DISCOVERY_FETCH=async()=>Response.json({similartracks:{track:[]}},{headers:{'cache-control':'no-store'}});
  await discoverSongs(g.state,g.env,g.options);assert.deepEqual(g.state.songDiscovery.queries,{});
 });
+
+test('Last.fm redirects never forward the key and non-JSON HTTP failures retain status',async()=>{
+ for(const status of [302,429]){
+  const f=fixture(),stats={};let count=0;
+  f.env.DISCOVERY_FETCH=async(url,options)=>{count++;assert.equal(options.redirect,'manual');return new Response('not json',{status,headers:{location:'https://untrusted.example/'}});};
+  await discoverSongs(f.state,f.env,{...f.options,stats});
+  assert.equal(count,1);assert.equal(stats.discovery.errors[0].status,status);
+  assert.equal(stats.discovery.errors[0].category,status===302?'redirect_blocked':'http_error');
+  assert(!JSON.stringify(stats).includes('never-log-this'));
+ }
+});
+test('Missing Last.fm reference does not pause discovery for other songs; positive match scores need not be <= 1',async()=>{
+ const f=fixture(),original=f.env.DISCOVERY_FETCH;
+ const second={...anchor,id:2,title:'Another Reference'};f.state.seedSongs.push(second);f.options.anchors.push(second);
+ f.env.DISCOVERY_FETCH=async(u,o)=>{
+  const url=new URL(u);
+  if(url.hostname==='ws.audioscrobbler.com'){
+   if(url.searchParams.get('track')===anchor.title)return Response.json({error:6,message:'Track not found'},{status:400});
+   return Response.json({similartracks:{track:[{name:'Discovery',artist:{name:'Other Singer'},mbid:recording,match:'10.95'}]}});
+  }
+  return original(u,o);
+ };
+ const songs=await discoverSongs(f.state,f.env,f.options);assert.equal(songs.length,1);assert.equal(songs[0].match,10.95);
+ assert.equal(f.state.songDiscovery.backoff['Last.fm'],undefined);
+ const picks=parseRelevantPicks('{"picks":[{"id":1,"score":85}]}',songs,f.options.anchors,[],{},12,'Telugu');assert.equal(picks.length,1);
+});

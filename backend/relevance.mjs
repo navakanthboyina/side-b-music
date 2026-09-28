@@ -83,7 +83,7 @@ export function selectionFormat(count) {
 
 export function validEvidence(t,a) {
  const e=t?.evidence;
- if(e?.type==='similar_track')return e.provider==='Last.fm'&&e.candidateId===t.id&&t.id===songKey(t)&&songKey(e.reference)===songKey(a)&&Number.isFinite(e.match)&&e.match>0&&e.match<=1;
+ if(e?.type==='similar_track')return e.provider==='Last.fm'&&e.candidateId===t.id&&t.id===songKey(t)&&songKey(e.reference)===songKey(a)&&Number.isFinite(e.match)&&e.match>0;
  if(e?.type==='same_artist_language')return ['Apple','Deezer'].includes(e.provider)&&e.candidateId===t.id&&Number.isSafeInteger(t.id)&&t.id>0&&Number.isSafeInteger(e.album?.id)&&e.album.id>0&&typeof e.album.title==='string'&&songKey(e.reference)===songKey(a)&&matchesArtist(a.artist,t.artist)&&!!catalogLanguage(t);
  return e?.type==='same_release'&&['Apple','Deezer'].includes(e.provider)&&Number.isSafeInteger(e.album?.id)&&e.album.id>0&&typeof e.album.title==='string'&&e.album.title.trim().length>0&&e.candidateId===t.id&&Number.isSafeInteger(t.id)&&t.id>0&&Number.isSafeInteger(e.reference?.id)&&e.reference.id>0&&e.reference.id!==t.id&&songKey(e.reference)===songKey(a);
 }

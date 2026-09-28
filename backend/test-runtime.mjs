@@ -22,3 +22,25 @@ try {
  assert.deepEqual(await response.json(),{status:200,requests:2});
  console.log('PASS: real Cloudflare runtime accepts catalog options and follows a bounded redirect.');
 } finally {await mf.dispose();}
+
+// Bundle the actual discovery module: Node's Request accepts redirect:error; workerd does not.
+const {build}=await import('esbuild');
+const bundled=await build({stdin:{resolveDir:new URL('.',import.meta.url).pathname,contents:`
+import {discoverSongs} from './song-discovery.mjs';
+export default {async fetch(){
+ const reference={id:1,artist:'Reference Artist',title:'Reference Song',source:'playlist song'};
+ const state={seedSongs:[reference],songRatings:{},familiar:{}};
+ const stats={};let calls=0;
+ const env={LASTFM_API_KEY:'fixture-key',LASTFM_PUBLIC_APPROVED:'true',DISCOVERY_FETCH:async(url,options)=>{
+  new Request(url,options);calls++;
+  return Response.json({similartracks:{track:[]}});
+ }};
+ await discoverSongs(state,env,{anchors:[reference],stats});
+ return Response.json({calls,errors:stats.discovery.errors});
+}}`},bundle:true,write:false,format:'esm',platform:'neutral'});
+const discoveryRuntime=new Miniflare(convertV4MiniflareOptions({modules:true,compatibilityDate:'2026-09-23',script:bundled.outputFiles[0].text}));
+try{
+ const response=await discoveryRuntime.dispatchFetch('http://localhost');
+ assert.deepEqual(await response.json(),{calls:1,errors:[]});
+ console.log('PASS: actual Last.fm discovery request runs in Cloudflare workerd.');
+}finally{await discoveryRuntime.dispose();}
