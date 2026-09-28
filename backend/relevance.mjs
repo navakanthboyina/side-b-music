@@ -28,10 +28,11 @@ export function relevanceMessages(candidates,anchors,feedback,language='Mixed') 
  {role:'user',content:JSON.stringify({feedback,candidates:candidates.map((t,i)=>{const a=assignedReference(t,anchors);if(!a)throw Error('Candidate has no valid taste reference');return {id:i+1,artist:t.artist,title:t.title,genre:t.genre,evidence:t.evidence||null,reference:{artist:a.artist,title:a.title,source:a.source}};})})}];
 }
 export function parseRelevantPicks(text,candidates,anchors,existing=[],stats={},target=12,language='Mixed') {
- stats.rejected={invalidObject:0,invalidId:0,invalidReference:0,invalidScore:0,lowScore:0,duplicate:0,artistLimit:0,releaseLimit:0,referenceLimit:0,languageFilter:0};
- stats.accepted=0;stats.scoredIds=[];stats.scoreDistribution={};
+ stats.rejected={invalidObject:0,invalidId:0,invalidReference:0,invalidScore:0,lowScore:0,duplicate:0,artistLimit:0,releaseLimit:0,referenceLimit:0,languageFilter:0,missingLanguage:0};
+ stats.accepted=0;stats.scoredIds=[];stats.scoreDistribution={};stats.languageDistribution={};
  let data;try{const clean=text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{data=JSON.parse(clean);}catch{const start=clean.indexOf('{'),end=clean.lastIndexOf('}');if(start<0||end<start)throw Error();data=JSON.parse(clean.slice(start,end+1));}}catch{stats.formatError='invalid_json';throw Error('AI reply was not valid JSON');}
- if(!Array.isArray(data.picks)){stats.formatError='missing_picks_array';throw Error('AI reply needs a picks array with candidate IDs and fit scores');}
+ if(Array.isArray(data))data={picks:data};
+ if(!Array.isArray(data?.picks)){stats.formatError='missing_picks_array';throw Error('AI reply needs a picks array with candidate IDs and fit scores');}
  stats.returned=data.picks.length;
  const reject=type=>{stats.rejected[type]++;};
  const out=[...existing],seen=new Set(existing.map(songKey)),artists=new Map(),releases=new Map(),references=new Map();
@@ -48,8 +49,11 @@ export function parseRelevantPicks(text,candidates,anchors,existing=[],stats={},
   if(!a){reject('invalidReference');continue;}
   // Only id and score are model-owned. Reference and description always come from the input pair.
   if(typeof p.score!=='number'||!Number.isFinite(p.score)||p.score<0||p.score>100){reject('invalidScore');continue;}
-  if(!stats.scoredIds.includes(p.id)){stats.scoredIds.push(p.id);stats.scoreDistribution[p.score]=(stats.scoreDistribution[p.score]||0)+1;}
   const detected=languageName(raw.language);
+  const unknown=typeof raw.language==='string'&&raw.language.trim().toLowerCase()==='unknown';
+  if(language!=='Mixed'&&!detected&&!unknown){reject('missingLanguage');continue;}
+  if(!stats.scoredIds.includes(p.id)){stats.scoredIds.push(p.id);stats.scoreDistribution[p.score]=(stats.scoreDistribution[p.score]||0)+1;}
+  const label=detected||'Unknown';stats.languageDistribution[label]=(stats.languageDistribution[label]||0)+1;
   if(language!=='Mixed'&&!selectedLanguages(language).includes(detected)){reject('languageFilter');continue;}
   const evidence=validEvidence(t,a);
   if(t.evidence&&!evidence){reject('invalidReference');continue;}

@@ -5,7 +5,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'vinyl-multilang-1';
+export const RECOMMENDER_BUILD = 'language-retry-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -78,6 +78,8 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
     candidateCount, responseType: typeof reply,
     responseKeys: response && typeof response === 'object' ? Object.keys(response).slice(0,10) : [],
     rejected: error.diagnostics?.rejected || null,
+    formatError:error.diagnostics?.formatError||null,
+    languageDistribution:error.diagnostics?.languageDistribution||null,
     validationError: error.message || null,
     replyLength: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').length
   };
@@ -154,7 +156,6 @@ async function refresh(env,language='Mixed') {
         if(selectionStats.catalogRequests>=30)break;
         continue;
       }
-      candidates.forEach(t=>examined.add(songKey(t)));
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
       const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback,language);
       messages.push({role:'user',content:`Score all ${candidates.length} candidates, one entry for every ID: ${candidates.map((_,i)=>i+1).join(',')}. Do not stop after one good match. Rank the supplied evidence; unfamiliar titles are not evidence of a poor match. The server selects qualifying songs and enforces the batch size and artist limits. No IDs outside this list.`});
@@ -164,7 +165,7 @@ async function refresh(env,language='Mixed') {
         const stats={pool:pool+1,returned:0,accepted:0,structured};selectionStats.attempts.push(stats);
         try {
           response=await Promise.race([
-            env.AI.run(MODEL,{messages,max_tokens:1200,temperature:0, ...(structured?{response_format:selectionFormat(candidates.length)}:{})}),
+            env.AI.run(MODEL,{messages,max_tokens:2000,temperature:0, ...(structured?{response_format:selectionFormat(candidates.length)}:{})}),
             new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('AI timed out')),Math.max(1,Math.min(35000,deadline-Date.now())));})
           ]).finally(()=>clearTimeout(timer));
         } catch(error) {
@@ -178,17 +179,21 @@ async function refresh(env,language='Mixed') {
         }
         const replyText=aiReplyText(response);
         try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12,language);}
-        catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
-        for(const id of stats.scoredIds||[])evaluatedIds.add(id);
+        catch(error){stats.error='validation failed';error.diagnostics=stats;console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
+        for(const id of stats.scoredIds||[]){evaluatedIds.add(id);examined.add(songKey(candidates[id-1]));}
         const remainingIds=candidates.flatMap((_,i)=>evaluatedIds.has(i+1)?[]:[i+1]);
         if(!remainingIds.length){poolStats.fullyScored=true;break;}
         const selectedIds=candidates.flatMap((t,i)=>picks.some(p=>songKey(p)===songKey(t))?[i+1]:[]);
-        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${remainingIds.join(',')}. Use supplied release evidence even for songs you do not recognize. JSON only: a picks array of id and score objects. Never invent IDs. Do not stop after the first match.`});
+        messages.push({role:'user',content:`Last pass counts: ${JSON.stringify(stats)}. Accepted IDs: ${JSON.stringify(selectedIds)}. Return additional supported selections by scoring every remaining ID in this pool: ${remainingIds.join(',')}. Use supplied release evidence even for songs you do not recognize. JSON only: {"picks":[{"id":1,"score":80,"language":"actual sung language or Unknown"}]}. EVERY entry must include id, score and language. Missing or invalid language fields must be corrected; never assume a song matches the requested language. Return wrong-language and Unknown labels too, so the server can validate them. Never invent IDs. Do not stop after the first match.`});
       }
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30)break;
     }
     if(!picks.length&&selectionStats.attempts.length&&selectionStats.attempts.every(a=>a.error==='inference failed'))throw Object.assign(fail(503,selectionStats.attempts.at(-1).inference.detail+' No AI selections were returned. Previous picks remain saved.'),{selectionStats});
+    if(!picks.length&&language!=='Mixed'&&selectionStats.attempts.length){
+      const missing=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.missingLanguage||0),0),filtered=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.languageFilter||0),0);
+      throw Object.assign(fail(422,`No new ${language} picks were approved. ${missing?'AI omitted valid language labels for '+missing+' entries. ':''}${filtered?filtered+' entries were another language or Unknown. ':''}${selectionStats.attempts.some(a=>a.formatError)?'Some AI replies had an invalid format. ':''}The previous batch is unchanged. Try All languages or refresh for other playlist references.`),{selectionStats});
+    }
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     const at=Date.now();
     const complete=picks.length===12;

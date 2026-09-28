@@ -169,7 +169,7 @@ test('Rejection counts distinguish wrong references, low scores, fields, and lim
  const stats={};
  const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,id:4},{...p,score:120},{...p,score:50},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
  assert.equal(result.length,2);assert.equal(stats.returned,9);assert.equal(stats.accepted,2);
- assert(Object.entries(stats.rejected).filter(([key])=>!['releaseLimit','referenceLimit','languageFilter'].includes(key)).every(([,n])=>n===1));
+ assert(Object.entries(stats.rejected).filter(([key])=>!['releaseLimit','referenceLimit','languageFilter','missingLanguage'].includes(key)).every(([,n])=>n===1));
  const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
  const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
 });
@@ -208,7 +208,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'vinyl-multilang-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-retry-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -360,7 +360,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'vinyl-multilang-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'language-retry-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -523,4 +523,17 @@ test('Preview endpoint returns only a matching song preview and does not mutate 
  assert.equal((await s.call('/preview',{artist:'Unknown',title:'Not in the room'})).status,400);
  s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:'Unrelated Artist'},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);
  s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://evil.example/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);s.sqlite.close();
+});
+
+
+test('Single-language refresh retries missing language labels instead of marking them fully scored',async()=>{
+ const s=setup();let calls=0;
+ s.env.AI.run=async(model,input)=>{calls++;const picks=selection(input).picks;if(calls===1)return {response:{picks}};assert.match(input.messages.at(-1).content,/EVERY entry must include id, score and language/);return {response:{picks:picks.map(p=>({...p,language:'Telugu'}))}};};
+ const r=await (await s.call('/refresh',{languages:['Telugu']})).json();assert.equal(r.batch.items.length,12);assert.equal(calls,2);assert(r.batch.selectionStats.attempts[0].rejected.missingLanguage>0);assert.equal(r.batch.selectionStats.attempts[0].scoredIds.length,0);s.sqlite.close();
+});
+test('Complete bare arrays are accepted, unknown language remains excluded, diagnostics explain failure',()=>{
+ const anchors=[{id:1,artist:'Artist',title:'Reference',source:'playlist song'}],candidates=[{artist:'Artist',title:'New song',anchorIds:[1]}];
+ const stats={};const songs=parseRelevantPicks(JSON.stringify([{id:1,score:80,language:'Telugu'}]),candidates,anchors,[],stats,12,'Telugu');assert.equal(songs.length,1);
+ const unknown={};assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{id:1,score:80,language:'Unknown'}]}),candidates,anchors,[],unknown,12,'Telugu'));assert.equal(unknown.rejected.languageFilter,1);assert.deepEqual(unknown.scoredIds,[1]);
+ const diagnostic=aiFailureDiagnostic({response:'private'},{message:'failed',diagnostics:unknown},1,0);assert.equal(diagnostic.languageDistribution.Unknown,1);assert.equal(diagnostic.rejected.languageFilter,1);assert(!JSON.stringify(diagnostic).includes('private'));
 });
