@@ -20,7 +20,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
  const d=stats.discovery,transient={};
  const queries=()=>({...cache.queries,...transient});
  const fetcher=env.DISCOVERY_FETCH||fetch;
- async function get(url,provider){
+ async function get(url,provider,redirects=0){
   if(d.requests>=24||now()+9000>deadline||cache.backoff[provider]>now())return null;
   if(provider==='MusicBrainz'){
    const delay=Math.max(0,(cache.mbNext||0)-now());
@@ -32,7 +32,14 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   try{
    const r=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(8000),headers:{Accept:'application/json',...(provider==='MusicBrainz'?{'User-Agent':'MunnasGrooves/2.0 (https://github.com/navakanthboyina/side-b-music)'}:{})}});
    // Workers supports manual/follow only. Never follow a credential-bearing URL.
-   if(r.status>=300&&r.status<400){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'redirect_blocked',status:r.status});return null;}
+   if(r.status>=300&&r.status<400){
+    let target;try{target=new URL(r.headers.get('location')||'',url);}catch{}
+    if(provider==='MusicBrainz'&&redirects<1&&target&&target.href!==url&&target.protocol==='https:'&&target.hostname==='musicbrainz.org'&&!target.port&&!target.username&&!target.password&&target.pathname.startsWith('/ws/2/')){
+     d.redirectsFollowed=(d.redirectsFollowed||0)+1;
+     return get(target.href,provider,redirects+1);
+    }
+    cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'redirect_blocked',status:r.status});return null;
+   }
    let body;try{body=await r.json();}catch{
     cache.backoff[provider]=now()+(r.status===429||r.status===503?300000:60000);
     d.errors.push({provider,category:r.ok?'invalid_json':'http_error',status:r.status});return null;
@@ -95,7 +102,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   if(!id){
    const quote=s=>'"'+s.replace(/[\\"]/g,'\\$&')+'"';
    const q=new URLSearchParams({query:'recording:'+quote(t.title)+' AND artist:'+quote(t.artist),fmt:'json',limit:'5'});
-   const found=await get('https://musicbrainz.org/ws/2/recording/?'+q,'MusicBrainz');if(!found)continue;
+   const found=await get('https://musicbrainz.org/ws/2/recording?'+q,'MusicBrainz');if(!found)continue;
    const matches=(found.body.recordings||[]).filter(r=>norm(r.title)===norm(t.title)&&artistMatches(t.artist,r['artist-credit']||[])&&uuid(r.id));
    if(matches.length!==1){cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;continue;}
    id=matches[0].id;

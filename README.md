@@ -190,3 +190,7 @@ A live refresh on `saved-discovery-1` preserved seven draft songs but failed bef
 Diagnostics now distinguish blocked redirects, HTTP failures, invalid JSON, timeouts and other request/network errors without exposing URLs, keys or provider response bodies. A Last.fm track-not-found result does not pause the whole provider. Positive finite Last.fm match values above 1 are accepted as source ranking values (not probabilities). Existing saved-discovery drafts remain compatible. No new secrets, migration or playlist import are needed.
 
 Validation: 89 automated Node tests pass, including redirected key protection, non-JSON HTTP errors and missing-reference recovery. Both catalog and actual discovery request checks pass in workerd. Deploy this build before another live refresh; these checks do not establish live provider availability or playlist coverage.
+
+### MusicBrainz canonical redirects (musicbrainz-redirect-1)
+
+Live diagnostics showed MusicBrainz HTTP 301 responses were blocked before language checks completed. The recording search now uses the canonical path without a trailing slash. The provider wrapper may follow one HTTPS redirect within `musicbrainz.org/ws/2/`, counting the extra request and retaining MusicBrainz request spacing. Off-site redirects, HTTP downgrades, non-API paths and repeated redirects remain blocked. Last.fm credential-bearing requests still never follow redirects. Existing discovery-runtime drafts remain compatible. This fixes redirect handling, not missing metadata or regional recommendation coverage.

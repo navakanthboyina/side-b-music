@@ -78,3 +78,24 @@ test('Missing Last.fm reference does not pause discovery for other songs; positi
  assert.equal(f.state.songDiscovery.backoff['Last.fm'],undefined);
  const picks=parseRelevantPicks('{"picks":[{"id":1,"score":85}]}',songs,f.options.anchors,[],{},12,'Telugu');assert.equal(picks.length,1);
 });
+
+test('One HTTPS MusicBrainz API redirect is followed with request budget and spacing intact',async()=>{
+ const f=fixture(),orig=f.env.DISCOVERY_FETCH,stats={};let redirected=false;
+ f.env.DISCOVERY_FETCH=async(u,o)=>{
+  if(u.includes('/recording/')&&!redirected){redirected=true;return new Response(null,{status:301,headers:{location:u+'&canonical=1'}});}
+  return orig(u,o);
+ };
+ const songs=await discoverSongs(f.state,f.env,{...f.options,stats});assert.equal(songs.length,1);
+ assert.equal(stats.discovery.redirectsFollowed,1);assert.equal(stats.discovery.requests,4);assert.deepEqual(stats.discovery.errors,[]);
+});
+test('MusicBrainz external redirects and repeated redirects are blocked',async()=>{
+ for(const destination of ['https://external.example/ws/2/work/x','http://musicbrainz.org/ws/2/work/x','https://musicbrainz.org/login','https://musicbrainz.org/ws/2/again']){
+  const f=fixture(),orig=f.env.DISCOVERY_FETCH,stats={};let requests=0;
+  f.env.DISCOVERY_FETCH=async(u,o)=>{
+   if(new URL(u).hostname==='musicbrainz.org'){requests++;return new Response(null,{status:301,headers:{location:destination}});}
+   return orig(u,o);
+  };
+  assert.equal((await discoverSongs(f.state,f.env,{...f.options,stats})).length,0);
+  assert(requests<=2);assert.equal(stats.discovery.errors[0].category,'redirect_blocked');
+ }
+});
