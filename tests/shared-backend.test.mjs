@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-discovery-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'compact-selection-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -291,6 +291,7 @@ test('Eight approved songs survive refresh and are completed with four new songs
  const first=await s.call('/refresh',{});assert.equal(first.status,200);
  const partial=await first.json();assert.equal(partial.generationStatus,'pending');assert.equal(partial.pendingSongCount,8);assert.equal(partial.batch,null);
  const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ stored.pending.selectionStats.build='language-discovery-1';s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(stored));
  const firstKeys=new Set(stored.pending.items.map(songKey));assert.equal(firstKeys.size,8);
  assert.equal(Object.keys(stored.shown).length,0);
  assert(!JSON.stringify(partial).includes(stored.pending.items[0].title));
@@ -363,7 +364,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'language-discovery-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'compact-selection-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -557,4 +558,14 @@ test('Broad genres, ambiguous tags and instrumental titles cannot supply a Telug
  for(const genre of ['Bollywood','Indian','Soundtrack','Tamil, Telugu','Asian Music'])assert.equal(catalogLanguage({title:'Song',evidence:{album:{genre}}}),undefined);
  assert.equal(catalogLanguage({title:'Song (Instrumental)',evidence:{album:{genre:'Telugu'}}}),undefined);
  assert.equal(catalogLanguage({title:'Song',evidence:{album:{genre:'Telugu'}}}),'Telugu');
+});
+
+
+test('AI prompt exposes only local candidate IDs, never provider or reference IDs',async()=>{
+ const {relevanceMessages}=await import('../backend/relevance.mjs');
+ const a={id:7,artist:'Artist',title:'Reference',source:'liked song'},t={id:998877,artist:'Artist',title:'New',anchorIds:[7],genre:'Telugu',evidence:{type:'same_release',provider:'Deezer',candidateId:998877,album:{id:887766,title:'Release',genre:'Telugu'},reference:{id:776655,artist:'Artist',title:'Reference'}}};
+ const messages=relevanceMessages([t],[a],[],'Telugu'),payload=JSON.parse(messages[1].content);
+ assert.equal(payload.candidates[0].id,1);assert.equal(payload.candidates[0].catalogLanguage,'Telugu');assert.equal(payload.candidates[0].release,'Release');assert.equal(payload.candidates[0].reference.title,'Reference');
+ for(const id of ['998877','887766','776655'])assert(!JSON.stringify(messages).includes(id));
+ assert(!JSON.stringify(payload).includes('candidateId'));assert.match(messages[0].content,/No prose/);
 });
