@@ -142,3 +142,43 @@ Diagnostics include `discoveryMode` and `languageSearch` query, metadata rejecti
 Refresh catalog responses are cached privately in existing D1 JSON (no migration): successful JSON only, up to 100 KB per entry and 700 KB total. Fresh entries are reused for 24 hours; entries up to seven days old can cover a failed request. All eligibility checks still run on cached tracks. Cache results survive refresh failures, preserving concurrent feedback. A newly deployed cache starts empty; it cannot recover data that has never been fetched successfully. Cached catalog availability is not a guarantee of current audio availability.
 
 Network timeouts and network exceptions now count toward the same circuit as HTTP failures. `catalogErrors` reports host, category and HTTP status without query text or response bodies. Once both provider circuits are paused, remaining pools stop immediately. Drafts remain saved and refresh messages identify the outage. Diagnostics distinguish `catalogCacheHits`, `catalogStaleHits`, actual network requests and stop reason. All prior draft builds stay compatible. Live third-party blocking/outages remain external; tests simulate outages and cache recovery, not live Worker egress.
+
+### Saved song-to-song discovery (saved-discovery-1)
+
+This integration is **implemented but opt-in**. Existing catalog discovery remains active until both `LASTFM_API_KEY` and `LASTFM_PUBLIC_APPROVED=true` are configured on the Worker. Deploying this build alone does not enable Last.fm or guarantee a completed batch.
+
+- Last.fm `track.getSimilar` supplies track-level listening-pattern connections to playlist and liked songs. It does not select arbitrary tracks from the same artist or compilation. Cloudflare AI ranks those connections against individual song feedback; scores below 70 are excluded.
+- MusicBrainz resolves the exact recording and its performed works. Only work lyrics-language codes support language-specific picks. Release text language, artist nationality and AI guesses cannot label these candidates. Ambiguous recordings, instrumental versions and missing work data remain unknown. Mixed mode can include unknown-language songs. Coverage varies by song and language.
+- Private D1 JSON caches source candidates and language evidence. Every use rechecks current ratings and familiar-song exclusions. Source results honor `Cache-Control`, are bounded to 40 reference queries, and never contain API-key URLs. Language entries are bounded to 400. Unknown metadata is retried after a day; positive labels after 30 days.
+- Refresh uses cached candidates first. New source calls are bounded to 24 per refresh and eight seconds each; MusicBrainz calls are spaced at least 1.1 seconds apart under the shared room lease. Provider errors set persistent backoff, including `Retry-After`; retries cannot bypass it.
+- The existing daily scheduled event warms the same cache without AI ranking or changing the public mix. It shares the refresh lease. This is daily warming, not continuous generation.
+- The current seven-song `catalog-recovery-1` Telugu draft remains compatible for its existing 24-hour lifetime. A full saved batch still contains 12 songs, six per day, with artist/reference/release diversity checks. Incomplete drafts remain incomplete; unrelated songs are never inserted to fill a quota.
+- Deezer previews, taste search, comfort shuffle, shared feedback and unrated-repeat behavior remain available. Apple is not used by the enabled recommendation path, but remains an optional provider for the existing manual song-search feature.
+
+#### Required activation
+
+1. Register an API application at https://www.last.fm/api/account/create.
+2. Obtain Last.fm's written public-page approval and confirm the displayed attribution/link placement with them. Section 2.7 of https://www.last.fm/api/tos requires this; commercial use needs a separate agreement. The cards include a track link and attribution for review. Confirm the approved button/branding before activation; supplying a key is not evidence of approval.
+3. Pull the changes and deploy from the existing `backend` folder. No database migration or playlist import is needed. Preserve your local D1 database ID.
+4. Store the key through Wrangler's secret prompt, never in Git or chat:
+
+   ```sh
+   npx wrangler secret put LASTFM_API_KEY
+   ```
+
+5. **Only after the approval in step 2**, set the activation flag with the secret prompt below and enter `true`:
+
+   ```sh
+   npx wrangler secret put LASTFM_PUBLIC_APPROVED
+   npm run deploy
+   ```
+
+GET `/state` reports `discoverySetup: "ready"` when both settings are present. That reports configuration, not a successful provider test. Refresh once, then inspect `batch.selectionStats` or `pendingSelectionStats`. The engine should say `Last.fm + MusicBrainz`; `discovery` contains request/cache counts and sanitized errors. Scores/feedback are still validated locally. API keys and raw provider responses are never returned.
+
+To disable the new engine, run `npx wrangler secret delete LASTFM_PUBLIC_APPROVED`; saved picks and feedback remain intact. The legacy catalog path resumes.
+
+#### Validation and limits
+
+Automated tests use synthetic provider fixtures and real SQLite state operations. They cover a complete 12-song cache-backed AI batch, preserving seven approved songs, rating exclusions, multiple work languages, rejecting release-text language and AI guesses, recording identity mismatches, cache reuse, persistent 429 backoff, no-store, secret redaction and activation gating. Existing preview/UI and Worker runtime checks also apply.
+
+A real Last.fm key and approval were not available during implementation. Actual Last.fm catalog coverage, MusicBrainz coverage for these playlists, Cloudflare egress and live AI latency therefore still require deployment validation. This integration cannot honestly guarantee 12 qualifying songs in every language on every refresh. Missing metadata is exposed rather than guessed.

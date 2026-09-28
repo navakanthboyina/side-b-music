@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'catalog-recovery-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'saved-discovery-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -640,4 +640,43 @@ test('Network exceptions count toward provider circuit and expose safe category'
  const stats={catalogRequests:0};const get=budgetedCatalogFetch(async()=>{throw Object.assign(Error('private query'),{name:'TimeoutError'});},stats,Date.now()+10000);
  for(let i=0;i<4;i++)await assert.rejects(get('https://api.deezer.com/search?q=private'));
  assert.equal(stats.catalogRequests,3);assert.equal(stats.providerFailures['api.deezer.com'],3);assert.equal(stats.catalogErrors[0].category,'timeout');assert(!JSON.stringify(stats).includes('private'));
+});
+
+function savedDiscoveryFixture(s){
+ s.env.LASTFM_API_KEY='test-only';s.env.LASTFM_PUBLIC_APPROVED='true';
+ s.env.DISCOVERY_FETCH=async()=>{throw Error('No provider should be needed for a ready cache');};
+ const state=JSON.parse(s.sqlite.prepare('SELECT data FROM community WHERE id=1').get().data);
+ state.songDiscovery={queries:{},languages:{},backoff:{}};
+ for(const a of state.seedSongs.slice(0,8)){
+  const tracks=Array.from({length:3},(_,i)=>{const t={artist:'New '+a.artist,title:'Related '+a.title+' '+i};return {...t,id:songKey(t),match:.9,url:'https://www.last.fm/music/Test/_/Track'};});
+  state.songDiscovery.queries[songKey(a)]={until:Date.now()+86400000,tracks};
+  for(const t of tracks)state.songDiscovery.languages[songKey(t)]={labels:['Telugu'],until:Date.now()+86400000};
+ }
+ return state;
+}
+test('Saved discovery publishes 12 AI picks with no Apple, Deezer or Last.fm calls and valid descriptions',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
+ const result=await s.call('/refresh',{language:'Telugu'});assert.equal(result.status,200);const r=await result.json();
+ assert.equal(r.batch.items.length,12);assert.equal(r.batch.selectionStats.engine,'Last.fm + MusicBrainz');
+ assert.equal(r.batch.selectionStats.discovery.requests,0);assert.equal(s.calls().catalogCalls,0);
+ assert(r.batch.items.every(t=>t.language==='Telugu'&&t.reason.includes('Last.fm')&&t.sourceUrl.startsWith('https://www.last.fm/')));
+ assert(!JSON.stringify(r).includes('test-only'));assert(!JSON.stringify(r).includes('songDiscovery'));s.sqlite.close();
+});
+test('New discovery preserves seven compatible draft songs and adds five',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);
+ state.pending={language:'Telugu',at:Date.now(),selectionStats:{build:'catalog-recovery-1'},items:Array.from({length:7},(_,i)=>({artist:'Approved Singer '+i,title:'Approved Song '+i,language:'Telugu',reason:'Previously approved',aiSong:true}))};
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
+ const r=await (await s.call('/refresh',{language:'Telugu'})).json();
+ assert.equal(r.batch?.items.length,12);assert.equal(r.batch.selectionStats.resumedCount,7);assert.equal(r.batch.items.filter(t=>t.title.startsWith('Approved')).length,7);s.sqlite.close();
+});
+
+test('Daily discovery warm preserves batch and draft and respects the shared generation lease',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);state.pending={items:[{artist:'Saved',title:'Draft'}],at:Date.now()};
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
+ await worker.scheduled({},s.env);
+ let stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ assert.deepEqual(stored.pending,state.pending);assert.equal(stored.discoveryRotation,1);
+ s.sqlite.prepare('UPDATE community SET lease=?,lease_until=?').run('other-refresh',Date.now()+60000);
+ await worker.scheduled({},s.env);stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(stored.discoveryRotation,1);s.sqlite.close();
 });
