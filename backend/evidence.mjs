@@ -1,3 +1,4 @@
+import {catalogLanguage,selectedLanguages} from './languages.mjs';
 import {songKey} from '../ai-core.mjs';
 import {matchesArtist,tasteAnchors} from './relevance.mjs';
 const text=s=>typeof s==='string'&&s.trim().length>0&&s.length<=300;
@@ -14,7 +15,7 @@ export async function collectEvidenceCandidates(state,fetchCatalog,options={}) {
  for(let offset=0;offset<selected.length;offset+=3){
   const results=await Promise.allSettled(selected.slice(offset,offset+3).map(async a=>{
    used.add(songKey(a));let succeeded=false;const errors=[];
-   for(const provider of ['Deezer','Apple'])try{
+   for(const provider of (options.language&&options.language!=='Mixed'?['Apple','Deezer']:['Deezer','Apple']))try{
     let reference,album,tracks;
     if(provider==='Deezer') {
      const data=await json('https://api.deezer.com/search?'+new URLSearchParams({q:a.artist+' '+a.title,limit:'25'}));
@@ -38,9 +39,9 @@ export async function collectEvidenceCandidates(state,fetchCatalog,options={}) {
      const ref=details.results.find(t=>t.trackId===reference.id&&t.collectionId===reference.albumId&&exact({artist:t.artistName,title:t.trackName},a));
      if(!ref||!text(ref.collectionName))continue;
      album={id:reference.albumId,title:ref.collectionName,genre:text(ref.primaryGenreName)?ref.primaryGenreName:'',releaseDate:text(ref.releaseDate)?ref.releaseDate:''};
-     tracks=details.results.filter(t=>t.collectionId===album.id).map(t=>({id:t.trackId,artist:t.artistName,title:t.trackName}));
+     tracks=details.results.filter(t=>t.collectionId===album.id).map(t=>({id:t.trackId,artist:t.artistName,title:t.trackName,genre:t.primaryGenreName}));
     }
-    const candidates=tracks.filter(t=>id(t.id)&&text(t.artist)&&text(t.title)&&t.id!==reference.id&&!excluded.has(songKey(t))).slice(0,8).map(t=>({...t,anchorIds:[a.id],genre:album.genre,evidence:{type:'same_release',provider,album,reference:{id:reference.id,artist:a.artist,title:a.title},candidateId:t.id}}));
+    const candidates=tracks.filter(t=>id(t.id)&&text(t.artist)&&text(t.title)&&t.id!==reference.id&&!excluded.has(songKey(t))).slice(0,8).map(t=>({...t,anchorIds:[a.id],genre:album.genre,evidence:{type:'same_release',provider,album,reference:{id:reference.id,artist:a.artist,title:a.title},candidateId:t.id,trackGenre:t.genre||''}})).filter(t=>!options.language||options.language==='Mixed'||!catalogLanguage(t)||selectedLanguages(options.language).includes(catalogLanguage(t)));
     if(candidates.length)return candidates;
    }catch(e){errors.push(provider+' '+e.message);}
    if(!succeeded)throw Error(errors.join('; '));return [];

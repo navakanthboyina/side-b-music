@@ -38,6 +38,9 @@ function setup(){
  const row=sqlite.prepare('SELECT data FROM community WHERE id=1').get();const data=JSON.parse(row.data);data.seedSongs=seedSongs;data.familiar=Object.fromEntries(seedSongs.map(t=>[songKey(t),true]));sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(data));
  let aiCalls=0, catalogCalls=0;
  const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(input){catalogCalls++;return fixtureCatalog(input);}};
+ let ranker=env.AI.run;
+ const wrap=fn=>async(model,input)=>{const p=JSON.parse(input.messages[1]?.content||'{}');if(p.task==='language_references')return {response:{picks:p.candidates.map(t=>({id:t.id,language:p.preference.split(' + ')[0]}))}};return fn(model,input);};
+ ranker=wrap(ranker);Object.defineProperty(env.AI,'run',{get:()=>ranker,set:fn=>{ranker=wrap(fn);}});
  const call=(path,body,extra={})=>worker.fetch(new Request('https://backend.example'+path,{method:body===undefined?'GET':'POST',headers:{origin:env.ALLOWED_ORIGIN,'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)}),env);
  const state=()=>call('/state').then(r=>r.json());
  const cooldown=()=>sqlite.exec('UPDATE community SET next_refresh=0');
@@ -208,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-retry-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-discovery-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -360,7 +363,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'language-retry-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'language-discovery-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -536,4 +539,22 @@ test('Complete bare arrays are accepted, unknown language remains excluded, diag
  const stats={};const songs=parseRelevantPicks(JSON.stringify([{id:1,score:80,language:'Telugu'}]),candidates,anchors,[],stats,12,'Telugu');assert.equal(songs.length,1);
  const unknown={};assert.throws(()=>parseRelevantPicks(JSON.stringify({picks:[{id:1,score:80,language:'Unknown'}]}),candidates,anchors,[],unknown,12,'Telugu'));assert.equal(unknown.rejected.languageFilter,1);assert.deepEqual(unknown.scoredIds,[1]);
  const diagnostic=aiFailureDiagnostic({response:'private'},{message:'failed',diagnostics:unknown},1,0);assert.equal(diagnostic.languageDistribution.Unknown,1);assert.equal(diagnostic.rejected.languageFilter,1);assert(!JSON.stringify(diagnostic).includes('private'));
+});
+
+test('Explicit Telugu catalog tags can qualify tracks when the ranker returns Unknown',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async input=>{const r=await fixtureCatalog(input),data=await r.json();if(data.genres)data.genres={data:[{name:'Telugu'}]};return Response.json(data);};
+ s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,language:'Unknown'}))}});
+ const r=await (await s.call('/refresh',{languages:['Telugu']})).json();assert.equal(r.batch.items.length,12);assert(r.batch.items.every(t=>t.language==='Telugu'&&t.languageBasis==='catalog tag'));assert.equal(r.batch.selectionStats.referenceLanguages.matching,16);s.sqlite.close();
+});
+test('Reference classifier prioritizes matching songs without copying estimates onto candidates',async()=>{
+ const {prioritizeLanguageReferences}=await import('../backend/language-discovery.mjs');const anchors=Array.from({length:20},(_,i)=>({id:i+1,artist:'Artist '+i,title:'Song '+i})),stats={};
+ const out=await prioritizeLanguageReferences(anchors,'Telugu',async()=>({response:{picks:[{id:18,language:'Telugu'},{id:19,language:'Hindi'},{id:99,language:'Telugu'}]}}),stats);
+ assert.equal(out[0].id,18);assert.equal(out.length,20);assert.equal(stats.referenceLanguages.matching,1);assert.equal(out[0].language,undefined);
+ const bad={};assert.deepEqual(await prioritizeLanguageReferences(anchors,'Telugu',async()=>({response:'broken'}),bad),anchors);assert(bad.referenceLanguages.error);
+});
+test('Broad genres, ambiguous tags and instrumental titles cannot supply a Telugu label',async()=>{
+ const {catalogLanguage}=await import('../backend/languages.mjs');
+ for(const genre of ['Bollywood','Indian','Soundtrack','Tamil, Telugu','Asian Music'])assert.equal(catalogLanguage({title:'Song',evidence:{album:{genre}}}),undefined);
+ assert.equal(catalogLanguage({title:'Song (Instrumental)',evidence:{album:{genre:'Telugu'}}}),undefined);
+ assert.equal(catalogLanguage({title:'Song',evidence:{album:{genre:'Telugu'}}}),'Telugu');
 });

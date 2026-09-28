@@ -8,3 +8,12 @@ export function languageSelection(value){
  return LANGUAGES.filter(x=>names.includes(x)).join(' + ');
 }
 export const selectedLanguages=value=>String(value||'Mixed').split(' + ');
+
+// A narrow catalog tag, not a guess from performer, region, script, or film industry.
+export function catalogLanguage(candidate){
+ const e=candidate?.evidence;if(!e)return undefined;
+ if(/\b(instrumental|karaoke)\b/i.test(candidate.title))return undefined;
+ const tags=[e.trackGenre,e.album?.genre].filter(x=>typeof x==='string').join(', ');
+ const matches=LANGUAGES.filter(l=>l!=='Mixed'&&new RegExp('(?:^|[^a-z])'+l+'(?:$|[^a-z])','i').test(tags));
+ return matches.length===1?matches[0]:undefined;
+}

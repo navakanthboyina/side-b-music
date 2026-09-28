@@ -1,3 +1,4 @@
+import {prioritizeLanguageReferences} from './language-discovery.mjs';
 import {findPreview} from './preview.mjs';
 import {LANGUAGES,languageSelection} from './languages.mjs';
 import {collectEvidenceCandidates as collectCandidates, memoizedCatalogFetch} from './evidence.mjs';
@@ -5,7 +6,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'language-retry-1';
+export const RECOMMENDER_BUILD = 'language-discovery-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -138,18 +139,19 @@ async function refresh(env,language='Mixed') {
     let picks=(draft?.items||[]).slice(0,12);
     const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
+    const referenceQueue=language==='Mixed'?null:await prioritizeLanguageReferences(tasteAnchors(state,new Set(),64),language,input=>env.AI.run(MODEL,input),selectionStats,Math.min(20000,deadline-Date.now()));
     // One refresh has a bounded request/time budget, including every replacement pool.
     const fetchCatalog=memoizedCatalogFetch(budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline));
     for(let pool=0;pool<3&&picks.length<12&&Date.now()<deadline;pool++) {
       const poolState={...state,rotation:state.rotation+pool};
       const capped=new Set([...new Set(picks.map(t=>norm(t.artist)))].filter(a=>picks.filter(t=>norm(t.artist)===a).length>=2));
-      let anchors=tasteAnchors(poolState,new Set([...usedSources,...capped]));
+      let anchors=referenceQueue?referenceQueue.filter(a=>!usedSources.has(songKey(a))&&!capped.has(norm(a.artist))).slice(0,16):tasteAnchors(poolState,new Set([...usedSources,...capped]));
       if(!anchors.length&&picks.length){usedSources.clear();anchors=tasteAnchors(poolState,capped);}
       if(!anchors.length){if(pool===0&&!picks.length)throw fail(409,'Playlist song details need a one-time owner re-import before relevant recommendations can be generated.');break;}
       const poolStats={pool:pool+1,candidates:0,accepted:0};selectionStats.pools.push(poolStats);
       let candidates;
       try {
-        candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6});
+        candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6,language});
       } catch(error) {
         poolStats.error=error.status===422?'no fresh candidates':'catalog unavailable';
         poolStats.detail=error.message.slice(0,700);
@@ -198,7 +200,7 @@ async function refresh(env,language='Mixed') {
     const at=Date.now();
     const complete=picks.length===12;
     if(complete) {
-      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,language})=>({artist,title,reason,aiSong,language})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
+      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,language,languageBasis})=>({artist,title,reason,aiSong,language,languageBasis})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
       state.pending=null;
       for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
       for(const t of state.batch.items)state.shown[songKey(t)]=at;
