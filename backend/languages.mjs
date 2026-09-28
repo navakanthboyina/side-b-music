@@ -13,7 +13,8 @@ export const selectedLanguages=value=>String(value||'Mixed').split(' + ');
 export function catalogLanguage(candidate){
  const e=candidate?.evidence;if(!e)return undefined;
  if(/\b(instrumental|karaoke)\b/i.test(candidate.title))return undefined;
- const tags=[e.trackGenre,e.album?.genre].filter(x=>typeof x==='string').join(', ');
+ const version=typeof e.versionLabel==='string'?e.versionLabel.match(/\((Telugu|Hindi|English|Tamil|Kannada|Malayalam|Punjabi|Bengali) (?:Version|version)\)/)?.[1]:undefined;
+ const tags=[e.trackGenre,e.album?.genre,version].filter(x=>typeof x==='string').join(', ');
  const matches=LANGUAGES.filter(l=>l!=='Mixed'&&new RegExp('(?:^|[^a-z])'+l+'(?:$|[^a-z])','i').test(tags));
  return matches.length===1?matches[0]:undefined;
 }

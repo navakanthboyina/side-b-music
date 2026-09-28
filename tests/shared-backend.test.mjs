@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'reference-cache-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'language-search-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -604,4 +604,20 @@ test('Seven-song comfort-replay draft resumes without dropping approved songs',a
  const s=setup();let calls=0;s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,7):[]}});
  await s.call('/refresh',{});const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(stored.pending.items.length,7);const keys=new Set(stored.pending.items.map(songKey));stored.pending.selectionStats.build='comfort-replay-1';s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(stored));
  s.cooldown();s.env.AI.run=async(model,input)=>({response:selection(input)});const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.selectionStats.resumedCount,7);assert.equal(r.batch.items.filter(t=>keys.has(songKey(t))).length,7);s.sqlite.close();
+});
+
+
+test('Language-first refresh searches Telugu before ranking and can complete without AI language guesses',async()=>{
+ const s=setup(),queries=[];s.env.CATALOG_FETCH=async url=>{
+  const u=new URL(url),term=u.searchParams.get('term');assert.equal(u.hostname,'itunes.apple.com');assert(term.startsWith('Telugu '));queries.push(term);const n=Number(term.match(/Fixture Artist (\d+)/)[1]);
+  return Response.json({results:Array.from({length:4},(_,i)=>({trackId:n*100+i+1000,artistName:'Fixture Artist '+n,trackName:'Language Pick '+i,collectionId:n+100,collectionName:'New Release '+n,primaryGenreName:'Telugu',kind:'song'}))});
+ };
+ s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,language:'Unknown'}))}});
+ const r=await (await s.call('/refresh',{languages:['Telugu']})).json();assert.equal(r.batch.items.length,12);assert.equal(queries.length,6);assert.equal(r.batch.selectionStats.pools[0].discoveryMode,'language search');assert(r.batch.items.every(t=>t.language==='Telugu'&&t.reason.includes('shares an artist credit')&&!t.reason.includes('appear on')));s.sqlite.close();
+});
+test('Language search alternates preferences and rejects untagged, unrelated and rated tracks',async()=>{
+ const {searchLanguageCandidates}=await import('../backend/language-search.mjs');const anchors=[{id:1,artist:'Artist A',title:'Anchor A'},{id:2,artist:'Artist B',title:'Anchor B'}],queries=[];
+ const state={rotation:0,familiar:{},songRatings:{[songKey({artist:'Artist A',title:'Rated'})]:{value:'replay'}}};
+ const get=async url=>{const term=new URL(url).searchParams.get('term');queries.push(term);const l=term.startsWith('Telugu')?'Telugu':'Hindi',artist=term.slice(l.length+1);return Response.json({results:[['Good',artist,l],['Untagged',artist,'Pop'],['Unrelated','Random artist',l],['Rated',artist,l]].map(([title,a,g],i)=>({trackId:i+1,artistName:a,trackName:title,collectionId:5,collectionName:'Release',primaryGenreName:g}))});};
+ const stats={};const songs=await searchLanguageCandidates(state,get,{anchors,language:'Telugu + Hindi',stats});assert.deepEqual(queries,['Telugu Artist A','Hindi Artist B']);assert(!songs.some(t=>t.title==='Untagged'||t.title==='Unrelated'||(t.title==='Rated'&&t.artist==='Artist A')));assert.equal(stats.languageSearch.wrongArtist,2);assert.equal(stats.languageSearch.unverifiedLanguage,2);
 });

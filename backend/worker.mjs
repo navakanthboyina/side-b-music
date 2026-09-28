@@ -1,3 +1,4 @@
+import {searchLanguageCandidates} from './language-search.mjs';
 import {comfortSongs} from './comfort.mjs';
 import {prioritizeLanguageReferences} from './language-discovery.mjs';
 import {findPreview,safePreviewUrl} from './preview.mjs';
@@ -7,7 +8,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'reference-cache-1';
+export const RECOMMENDER_BUILD = 'language-search-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -137,7 +138,7 @@ async function refresh(env,language='Mixed') {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
@@ -154,7 +155,10 @@ async function refresh(env,language='Mixed') {
       const poolStats={pool:pool+1,candidates:0,accepted:0};selectionStats.pools.push(poolStats);
       let candidates;
       try {
-        candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6,language});
+        candidates=language==='Mixed'?[]:await searchLanguageCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,language,stats:poolStats});
+        if(candidates.length)poolStats.discoveryMode='language search';
+        else {poolStats.discoveryMode='reference release fallback';candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6,language});}
+
       } catch(error) {
         poolStats.error=error.status===422?'no fresh candidates':'catalog unavailable';
         poolStats.detail=error.message.slice(0,700);
