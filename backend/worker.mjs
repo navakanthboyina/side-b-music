@@ -1,10 +1,11 @@
-import {LANGUAGES,languageName} from './languages.mjs';
+import {findPreview} from './preview.mjs';
+import {LANGUAGES,languageSelection} from './languages.mjs';
 import {collectEvidenceCandidates as collectCandidates, memoizedCatalogFetch} from './evidence.mjs';
 import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'listening-room-2';
+export const RECOMMENDER_BUILD = 'vinyl-multilang-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -22,7 +23,7 @@ async function read(db) {
 }
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
-    batchTarget: 12, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
+    batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
@@ -273,10 +274,17 @@ export default {
           s.pending=null;
         }));
       }
-      if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add'].includes(path))throw fail(404,'Not found.');
+      if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add','/preview'].includes(path))throw fail(404,'Not found.');
       if(origin!==env.ALLOWED_ORIGIN)throw fail(403,'Use the dashboard to update the shared profile.');
       const body=await bodyOf(request);
-      if(path==='/refresh'){const language=body.language===undefined?'Mixed':languageName(body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
+      if(path==='/refresh'){const language=languageSelection(body.languages??body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
+      if(path==='/preview') {
+        const song=cleanSong(body),row=await read(env.DB);
+        if(!knownSongs(row.state).some(t=>songKey(t)===songKey(song)))throw fail(400,'Choose a song from the shared dashboard.');
+        await ipLimit(request,env.DB);
+        try{return reply({preview:await findPreview(song,budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000))});}
+        catch{throw fail(503,'Deezer preview is unavailable right now. Try the listening links instead.');}
+      }
       if(path==='/search'||path==='/taste/add') {
         await ipLimit(request,env.DB);
         const fetchCatalog=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000);

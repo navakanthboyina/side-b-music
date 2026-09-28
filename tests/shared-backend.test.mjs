@@ -208,7 +208,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'listening-room-2');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'vinyl-multilang-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -360,7 +360,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'listening-room-2'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'vinyl-multilang-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -509,4 +509,18 @@ test('Changing language does not resume a draft for another language',async()=>{
  await s.call('/refresh',{language:'Telugu'});assert.equal((await s.state()).pendingLanguage,'Telugu');assert.equal((await s.state()).pendingSongCount,1);
  s.cooldown();s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,language:'Hindi'}))}});
  const r=await (await s.call('/refresh',{language:'Hindi'})).json();assert.equal(r.batch.language,'Hindi');assert.equal(r.batch.selectionStats.resumedCount,0);assert(r.batch.items.every(t=>t.language==='Hindi'));s.sqlite.close();
+});
+
+
+test('Multiple languages accept either selected language and canonicalize draft identity',async()=>{
+ const s=setup();s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map((p,i)=>({...p,language:i%2?'Telugu':'Hindi'}))}});
+ const r=await (await s.call('/refresh',{languages:['Hindi','Telugu','Hindi']})).json();assert.equal(r.batch.language,'Telugu + Hindi');assert.equal(r.batch.items.length,12);assert(r.batch.items.some(t=>t.language==='Hindi'));assert(r.batch.items.some(t=>t.language==='Telugu'));s.sqlite.close();
+ const b=setup();for(const languages of [[],['Mixed','Telugu'],['Spanish']])assert.equal((await b.call('/refresh',{languages})).status,400);assert.equal(b.calls().aiCalls,0);b.sqlite.close();
+});
+test('Preview endpoint returns only a matching song preview and does not mutate taste',async()=>{
+ const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});
+ const response=await s.call('/preview',fixture);assert.equal(response.status,200);const r=await response.json();assert.equal(r.preview.link,'https://www.deezer.com/track/42');assert.equal((await s.state()).revision,before.revision);
+ assert.equal((await s.call('/preview',{artist:'Unknown',title:'Not in the room'})).status,400);
+ s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:'Unrelated Artist'},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);
+ s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://evil.example/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);s.sqlite.close();
 });

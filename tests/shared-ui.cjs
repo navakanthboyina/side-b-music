@@ -9,7 +9,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
   w.fetch=async(url,opt)=>{
    assert(!String(opt.body).includes('private'));
    if(fail)return {ok:false,json:async()=>({error:'Service unavailable'})};
-   if(url.endsWith('/refresh')){lastRefresh=JSON.parse(opt.body);room.batch.language=lastRefresh.language;room.revision++;}
+   if(url.endsWith('/refresh')){lastRefresh=JSON.parse(opt.body);room.batch.language=lastRefresh.languages?.join(' + ')||lastRefresh.language;room.revision++;}
    if(url.endsWith('/search'))return {ok:true,json:async()=>({songs:[{provider:'apple',id:42,artist:'Search Fixture',title:'Search Song'}]})};
    if(url.endsWith('/taste/add')){const t=JSON.parse(opt.body);assert.deepEqual(t,{provider:'apple',id:42});room.revision++;room.songRatings['track:searchfixture:searchsong']={artist:'Search Fixture',title:'Search Song',value:'replay',at:Date.now()};room.pendingSongCount=0;}
    if(url.endsWith('/feedback')){const t=JSON.parse(opt.body);room.revision++;room.songRatings['track:fixtureartist:'+t.title.toLowerCase()]={artist:t.artist,title:t.title,value:t.rating,at:Date.now()};}
@@ -18,13 +18,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
   const api=await startShared({apiBase:'https://backend.example'},w.SIDE_B_DATA,w.document,w);clients.push(dom);return {w,d:w.document,api};
  }
  const a=await boot(),b=await boot();assert.equal(a.d.querySelector('#feed').textContent,b.d.querySelector('#feed').textContent);
- a.d.querySelector('#feed [data-title="First"][data-shared-rating="replay"]').click();await new Promise(r=>setImmediate(r));await b.api.sync();
- assert.equal(b.d.querySelector('#feed [data-title="First"]').getAttribute('aria-pressed'),'true');
- assert.equal(b.d.querySelector('#feed [data-title="Second"]').getAttribute('aria-pressed'),'false');
+ a.d.querySelector('#feed [data-shared-rating][data-title="First"][data-shared-rating="replay"]').click();await new Promise(r=>setImmediate(r));await b.api.sync();
+ assert.equal(b.d.querySelector('#feed [data-shared-rating][data-title="First"]').getAttribute('aria-pressed'),'true');
+ assert.equal(b.d.querySelector('#feed [data-shared-rating][data-title="Second"]').getAttribute('aria-pressed'),'false');
  assert.equal(b.d.querySelector('#csv-import'),null);assert(!b.d.querySelector('.ai-panel').textContent.includes('WebGPU'));
- fail=true;b.d.querySelector('#feed [data-title="Second"]').click();await new Promise(r=>setImmediate(r));
+ fail=true;b.d.querySelector('#feed [data-shared-rating][data-title="Second"]').click();await new Promise(r=>setImmediate(r));
  assert.match(b.d.querySelector('#ai-status').textContent,/Feedback was not saved/);assert.equal(Object.keys(room.songRatings).length,1);
- assert.equal(b.d.querySelector('#feed [data-title="Second"]').getAttribute('aria-pressed'),'false');
+ assert.equal(b.d.querySelector('#feed [data-shared-rating][data-title="Second"]').getAttribute('aria-pressed'),'false');
  fail=false;room.revision++;room.needsTasteImport=true;room.batch.relevanceVersion=1;
  await b.api.sync();assert.equal(b.d.querySelector('#feed .music-card'),null);
  assert.equal(b.d.querySelector('#refresh').disabled,true);assert.match(b.d.querySelector('#ai-status').textContent,/re-import/);
@@ -45,9 +45,12 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.match(b.d.querySelector('#song-search-status').textContent,/Added/);assert.equal(b.d.querySelector('[data-add-taste]').disabled,true);
  assert.match(a.d.querySelector('#shared-ratings').textContent,/Search Song/);
  assert.equal(b.d.querySelector('[data-language="Telugu"]').disabled,true);
- room.languages=['Mixed','Telugu','Hindi'];room.pendingSongCount=0;room.revision++;await b.api.sync();
+ room.multiLanguage=true;room.languages=['Mixed','Telugu','Hindi'];room.pendingSongCount=0;room.revision++;await b.api.sync();
  b.d.querySelector('[data-language="Telugu"]').click();assert.equal(lastRefresh,null);assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');
- b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{language:'Telugu'});await a.api.sync();assert.match(a.d.querySelector('#feed-status').textContent,/Telugu mix/);
+ b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu']});await a.api.sync();assert.match(a.d.querySelector('#feed-status').textContent,/Telugu mix/);
+ b.d.querySelector('[data-language="Hindi"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');assert.equal(b.d.querySelector('[data-language="Hindi"]').getAttribute('aria-pressed'),'true');
+ b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu','Hindi']});
+ b.d.querySelector('[data-language="Mixed"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'false');
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
