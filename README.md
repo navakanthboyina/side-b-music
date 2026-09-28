@@ -116,3 +116,8 @@ Unrated recommendations may now appear again even within 14 days. Shared likes, 
 Comfort mixes now show up to 12 songs from playlist seeds and shared likes, excluding skipped songs, split into two sets. Order rotates daily (UTC) and the shared Shuffle button advances the selection for everyone. It does not alter ratings or discard a pending recommendation draft. The selected comfort titles are publicly visible; the full seed list is not returned. Comfort mixes are familiar selections, not AI-generated discovery. POST `/comfort/shuffle` uses existing Origin and rate limits.
 
 Comfort rows and search results have Deezer preview controls. Search previews send the provider and ID for a server-side lookup and never add feedback. Deezer search IDs play that exact catalog preview. Apple results are verified by ID, then searched for a matching Deezer title/artist; a Deezer counterpart may not exist. Playback remains one browser-local player with vinyl animation. Add to taste remains a separate action. No migration or playlist re-import is needed.
+
+
+### Two-day plan and section navigation
+
+The shared plan now divides the saved 12-song batch into Day 1 and Day 2, six songs per day. This changes the listening plan labels, not the refresh schedule or saved batch. Section links, repeated clicks on the active section, and browser back/forward open the selected section at the top and move keyboard focus to its heading. Removed the requested long setup/privacy notice from Shared taste. This is a frontend-only update; no Worker deployment is needed.

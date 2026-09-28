@@ -4,7 +4,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false,lastRefresh=null;
  const clients=[];
  async function boot(){const dom=new JSDOM(fs.readFileSync(new URL('../index.html','file://'+__filename),'utf8'),{url:'https://music.example',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
-  w.eval(fs.readFileSync(new URL('../data.js','file://'+__filename),'utf8'));w.setInterval=()=>0;
+  w.eval(fs.readFileSync(new URL('../data.js','file://'+__filename),'utf8'));w.setInterval=()=>0;w.scrollTo=options=>{w.lastScroll=options;};
   w.localStorage.setItem('side-b-v1',JSON.stringify({songRatings:{private:'must not publish'}}));
   w.fetch=async(url,opt)=>{
    assert(!String(opt.body).includes('private'));
@@ -51,6 +51,9 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  b.d.querySelector('[data-language="Hindi"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');assert.equal(b.d.querySelector('[data-language="Hindi"]').getAttribute('aria-pressed'),'true');
  b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu','Hindi']});
  b.d.querySelector('[data-language="Mixed"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'false');
+ assert(!b.d.querySelector('#view-profile').textContent.includes('Playlist setup is managed'));
+ for(const view of ['profile','comfort','plan','discover','discover']){b.w.lastScroll=null;b.d.querySelector('a[href="#'+view+'"]').click();assert.equal(b.d.querySelector('#view-'+view).hidden,false);assert.equal(b.w.lastScroll.top,0);assert.equal(b.d.activeElement,b.d.querySelector('#view-'+view+' h1'));}
+ assert.match(b.d.querySelector('#view-plan h1').textContent,/two-day/);assert.match(b.d.querySelector('.week-tabs').textContent,/Day 1/);assert.match(b.d.querySelector('.week-tabs').textContent,/Day 2/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
