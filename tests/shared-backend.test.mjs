@@ -169,7 +169,7 @@ test('Rejection counts distinguish wrong references, low scores, fields, and lim
  const stats={};
  const result=parseRelevantPicks(JSON.stringify({picks:[null,{...p,id:99},{...p,id:4},{...p,score:120},{...p,score:50},p,p,{...p,id:2},{...p,id:3}]}),candidates,anchors,[],stats);
  assert.equal(result.length,2);assert.equal(stats.returned,9);assert.equal(stats.accepted,2);
- assert(Object.entries(stats.rejected).filter(([key])=>!['releaseLimit','referenceLimit'].includes(key)).every(([,n])=>n===1));
+ assert(Object.entries(stats.rejected).filter(([key])=>!['releaseLimit','referenceLimit','languageFilter'].includes(key)).every(([,n])=>n===1));
  const malformed={};assert.throws(()=>parseRelevantPicks('not json',candidates,anchors,[],malformed));assert.equal(malformed.formatError,'invalid_json');
  const wrongShape={};assert.throws(()=>parseRelevantPicks('{"ids":[1]}',candidates,anchors,[],wrongShape));assert.equal(wrongShape.formatError,'missing_picks_array');
 });
@@ -208,7 +208,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'diverse-releases-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'listening-room-2');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -360,7 +360,7 @@ test('Prose-wrapped complete JSON can be read, truncated JSON and invented IDs c
 });
 test('An older draft above the reduced target commits only twelve and performs no new AI calls',async()=>{
  const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
- row.pending={selectionStats:{build:'diverse-releases-1'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
+ row.pending={selectionStats:{build:'listening-room-2'},at:Date.now(),items:Array.from({length:16},(_,i)=>({artist:'Artist '+i,title:'Approved '+i,reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
  const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert.equal(r.pendingSongCount,0);assert.equal(s.calls().aiCalls,0);s.sqlite.close();
 });
@@ -494,4 +494,19 @@ test('Reference-song cap holds across different releases and artist credits',()=
  const candidates=Array.from({length:4},(_,i)=>({id:100+i,artist:'Artist '+i,title:'Song '+i,anchorIds:[1],evidence:{type:'same_release',provider:'Deezer',candidateId:100+i,album:{id:i+1,title:'Release '+i},reference:{id:1,artist:a.artist,title:a.title}}}));
  const stats={};const out=parseRelevantPicks(JSON.stringify({picks:candidates.map((t,i)=>({id:i+1,score:80}))}),candidates,[a],[],stats);
  assert.equal(out.length,2);assert.equal(stats.rejected.referenceLimit,2);
+});
+
+
+test('Language preference filters unknown and other languages, and saves a matching shared batch',async()=>{
+ const s=setup();assert.equal((await s.call('/refresh',{language:'Klingon'})).status,400);assert.equal(s.calls().aiCalls,0);
+ s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,language:'Telugu'}))}});
+ const r=await (await s.call('/refresh',{language:'Telugu'})).json();assert.equal(r.batch.language,'Telugu');assert.equal(r.batch.items.length,12);assert(r.batch.items.every(t=>t.language==='Telugu'));assert((await s.state()).languages.includes('Telugu'));s.sqlite.close();
+ const b=setup();b.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map((p,i)=>({...p,language:i%2?'Hindi':'Unknown'}))}});
+ const rejected=await (await b.call('/refresh',{language:'Telugu'})).json();assert.equal((await b.state()).batch,null);assert(rejected.selectionStats.attempts.some(a=>a.rejected?.languageFilter>0));b.sqlite.close();
+});
+test('Changing language does not resume a draft for another language',async()=>{
+ const s=setup();let calls=0;s.env.AI.run=async(model,input)=>({response:{picks:++calls===1?selection(input).picks.slice(0,1).map(p=>({...p,language:'Telugu'})):[]}});
+ await s.call('/refresh',{language:'Telugu'});assert.equal((await s.state()).pendingLanguage,'Telugu');assert.equal((await s.state()).pendingSongCount,1);
+ s.cooldown();s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,language:'Hindi'}))}});
+ const r=await (await s.call('/refresh',{language:'Hindi'})).json();assert.equal(r.batch.language,'Hindi');assert.equal(r.batch.selectionStats.resumedCount,0);assert(r.batch.items.every(t=>t.language==='Hindi'));s.sqlite.close();
 });

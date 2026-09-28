@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 (async()=>{
  const {startShared}=await import('../shared-app.mjs');
- let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false;
+ let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false,lastRefresh=null;
  const clients=[];
  async function boot(){const dom=new JSDOM(fs.readFileSync(new URL('../index.html','file://'+__filename),'utf8'),{url:'https://music.example',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
   w.eval(fs.readFileSync(new URL('../data.js','file://'+__filename),'utf8'));w.setInterval=()=>0;
@@ -9,6 +9,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
   w.fetch=async(url,opt)=>{
    assert(!String(opt.body).includes('private'));
    if(fail)return {ok:false,json:async()=>({error:'Service unavailable'})};
+   if(url.endsWith('/refresh')){lastRefresh=JSON.parse(opt.body);room.batch.language=lastRefresh.language;room.revision++;}
    if(url.endsWith('/search'))return {ok:true,json:async()=>({songs:[{provider:'apple',id:42,artist:'Search Fixture',title:'Search Song'}]})};
    if(url.endsWith('/taste/add')){const t=JSON.parse(opt.body);assert.deepEqual(t,{provider:'apple',id:42});room.revision++;room.songRatings['track:searchfixture:searchsong']={artist:'Search Fixture',title:'Search Song',value:'replay',at:Date.now()};room.pendingSongCount=0;}
    if(url.endsWith('/feedback')){const t=JSON.parse(opt.body);room.revision++;room.songRatings['track:fixtureartist:'+t.title.toLowerCase()]={artist:t.artist,title:t.title,value:t.rating,at:Date.now()};}
@@ -43,6 +44,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  b.d.querySelector('[data-add-taste]').click();await new Promise(r=>setImmediate(r));await a.api.sync();
  assert.match(b.d.querySelector('#song-search-status').textContent,/Added/);assert.equal(b.d.querySelector('[data-add-taste]').disabled,true);
  assert.match(a.d.querySelector('#shared-ratings').textContent,/Search Song/);
+ assert.equal(b.d.querySelector('[data-language="Telugu"]').disabled,true);
+ room.languages=['Mixed','Telugu','Hindi'];room.pendingSongCount=0;room.revision++;await b.api.sync();
+ b.d.querySelector('[data-language="Telugu"]').click();assert.equal(lastRefresh,null);assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');
+ b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{language:'Telugu'});await a.api.sync();assert.match(a.d.querySelector('#feed-status').textContent,/Telugu mix/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

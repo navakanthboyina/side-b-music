@@ -71,3 +71,12 @@ Schema documentation: https://developers.cloudflare.com/workers-ai/features/json
 ### Diversity limits (diverse-releases-1)
 
 A complete 12-song batch has at most two picks per artist, per release and per reference song. Limits apply across AI passes, pools and resumed drafts. Release identity checks both provider-specific IDs and normalized release titles so switching catalog providers cannot admit the same collection again; this conservatively also caps unrelated releases sharing a title. Diagnostics report `releaseLimit` and `referenceLimit` rejections. Previously saved batches remain visible; unfinished drafts from earlier builds are rebuilt under the new rules. Filling the batch requires at least six distinct reference songs and releases, so additional refreshes may be needed.
+
+
+### Listening room and language preferences (listening-room-2)
+
+The dashboard has a record-inspired visual design, collapsible song explanations, draft progress, and a language choice beside Refresh. Choose Mixed, Telugu, Hindi, English, Tamil, Kannada, Malayalam, Punjabi or Bengali. The choice applies to the next shared batch, not just the current browser's display. POST `/refresh` accepts `{ "language": "Telugu" }`; omitting it means Mixed. Unsupported values return 400.
+
+Sung language is estimated by AI from metadata, not verified by listening. Specific-language batches reject unknown or other-language labels. Mixed permits unknown labels. This can reduce available candidates; 12 picks are still required before replacing the visible batch. A new language starts a separate draft; the existing incomplete draft is replaced, not combined. The current batch keeps its original language label until a replacement is ready. Feedback, repeat exclusions and all diversity limits still apply.
+
+Deploy the backend after pulling this update. Non-Mixed controls stay disabled until the server advertises language support. No database migration, new secret or playlist import is needed. The active model is `@cf/meta/llama-3.1-8b-instruct-fp8`, using plain JSON replies; older model/structured-output notes above describe historical builds.

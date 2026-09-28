@@ -1,9 +1,10 @@
+import {LANGUAGES,languageName} from './languages.mjs';
 import {collectEvidenceCandidates as collectCandidates, memoizedCatalogFetch} from './evidence.mjs';
 import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'diverse-releases-1';
+export const RECOMMENDER_BUILD = 'listening-room-2';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -21,7 +22,7 @@ async function read(db) {
 }
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
-    batchTarget: 12, pendingSelectionStats: row.state.pending?.selectionStats || null,
+    batchTarget: 12, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
@@ -119,7 +120,7 @@ export function inferenceFailure(error) {
   else if(/deprecated|retired|model.*not found|unknown model|model.*not available/i.test(message)){category='model_unavailable';detail='The selected AI model is unavailable.';}
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
-async function refresh(env) {
+async function refresh(env,language='Mixed') {
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
   if (!locked.meta.changes) throw fail(409, 'A shared batch is generating, or refresh is cooling down. Wait a minute and check again.');
@@ -130,9 +131,9 @@ async function refresh(env) {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=state.pending?.selectionStats?.build===RECOMMENDER_BUILD&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=state.pending?.selectionStats?.build===RECOMMENDER_BUILD&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
-    const selectionStats={build:RECOMMENDER_BUILD,target:12,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
+    const selectionStats={build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
     // One refresh has a bounded request/time budget, including every replacement pool.
     const fetchCatalog=memoizedCatalogFetch(budgetedCatalogFetch(env.CATALOG_FETCH||fetch,selectionStats,deadline));
@@ -154,7 +155,7 @@ async function refresh(env) {
       }
       candidates.forEach(t=>examined.add(songKey(t)));
       poolStats.candidates=candidates.length;selectionStats.candidateCount+=candidates.length;
-      const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback);
+      const before=picks.length,messages=relevanceMessages(candidates,anchors,feedback,language);
       messages.push({role:'user',content:`Score all ${candidates.length} candidates, one entry for every ID: ${candidates.map((_,i)=>i+1).join(',')}. Do not stop after one good match. Rank the supplied evidence; unfamiliar titles are not evidence of a poor match. The server selects qualifying songs and enforces the batch size and artist limits. No IDs outside this list.`});
       let structured=false;const evaluatedIds=new Set();
       for(let attempt=0;attempt<2&&picks.length<12&&Date.now()<deadline;attempt++) {
@@ -175,7 +176,7 @@ async function refresh(env) {
           continue;
         }
         const replyText=aiReplyText(response);
-        try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12);}
+        try {picks=parseRelevantPicks(replyText,candidates,anchors,picks,stats,12,language);}
         catch(error){stats.error='validation failed';console.warn(JSON.stringify(aiFailureDiagnostic(response,error,candidates.length,attempt)));}
         for(const id of stats.scoredIds||[])evaluatedIds.add(id);
         const remainingIds=candidates.flatMap((_,i)=>evaluatedIds.has(i+1)?[]:[i+1]);
@@ -191,12 +192,12 @@ async function refresh(env) {
     const at=Date.now();
     const complete=picks.length===12;
     if(complete) {
-      state.batch={at,items:picks.map(({artist,title,reason,aiSong})=>({artist,title,reason,aiSong})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
+      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,language})=>({artist,title,reason,aiSong,language})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
       state.pending=null;
       for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
       for(const t of state.batch.items)state.shown[songKey(t)]=at;
     } else {
-      state.pending={at:picks.length>(draft?.items.length||0)?at:draft.at,items:picks,usedSources:[...usedSources].slice(-200),examined:[...examined].slice(-500),selectionStats};
+      state.pending={language,at:picks.length>(draft?.items.length||0)?at:draft.at,items:picks,usedSources:[...usedSources].slice(-200),examined:[...examined].slice(-500),selectionStats};
     }
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
@@ -275,7 +276,7 @@ export default {
       if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add'].includes(path))throw fail(404,'Not found.');
       if(origin!==env.ALLOWED_ORIGIN)throw fail(403,'Use the dashboard to update the shared profile.');
       const body=await bodyOf(request);
-      if(path==='/refresh')return reply(await refresh(env));
+      if(path==='/refresh'){const language=body.language===undefined?'Mixed':languageName(body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
       if(path==='/search'||path==='/taste/add') {
         await ipLimit(request,env.DB);
         const fetchCatalog=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000);
