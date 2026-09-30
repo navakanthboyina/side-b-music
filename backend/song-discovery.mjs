@@ -40,6 +40,11 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
     }
     cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'redirect_blocked',status:r.status});return null;
    }
+   const entity=new URL(url).pathname.match(/^\/ws\/2\/(recording|work)\/([0-9a-f-]+)\/?$/i);
+   if(provider==='MusicBrainz'&&r.status===404&&entity&&uuid(entity[2])){
+    d.notFound ||= {};d.notFound[entity[1]]=(d.notFound[entity[1]]||0)+1;
+    return {notFound:true,body:{},ttl:DAY};
+   }
    let body;try{body=await r.json();}catch{
     cache.backoff[provider]=now()+(r.status===429||r.status===503?300000:60000);
     d.errors.push({provider,category:r.ok?'invalid_json':'http_error',status:r.status});return null;
@@ -98,22 +103,30 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
  for(const t of candidates){
   const key=songKey(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
   if(d.requests>=24||now()+9000>deadline)break;
-  let id=t.mbid;
-  if(!id){
+  const missing=()=>{cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;};
+  const lookup=id=>get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits&fmt=json`,'MusicBrainz');
+  let id=t.mbid,rec=id?await lookup(id):null;
+  if(id&&!rec)continue; // An outage must not be cached as a metadata miss.
+  if(!id||rec?.notFound){
+   if(id)d.recordingSearchFallbacks=(d.recordingSearchFallbacks||0)+1;
    const quote=s=>'"'+s.replace(/[\\"]/g,'\\$&')+'"';
    const q=new URLSearchParams({query:'recording:'+quote(t.title)+' AND artist:'+quote(t.artist),fmt:'json',limit:'5'});
    const found=await get('https://musicbrainz.org/ws/2/recording?'+q,'MusicBrainz');if(!found)continue;
-   const matches=(found.body.recordings||[]).filter(r=>norm(r.title)===norm(t.title)&&artistMatches(t.artist,r['artist-credit']||[])&&uuid(r.id));
-   if(matches.length!==1){cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;continue;}
-   id=matches[0].id;
+   if(!Array.isArray(found.body.recordings)){d.errors.push({provider:'MusicBrainz',category:'invalid_search_response'});continue;}
+   const matches=found.body.recordings.filter(r=>norm(r.title)===norm(t.title)&&artistMatches(t.artist,r['artist-credit']||[])&&uuid(r.id));
+   if(matches.length!==1){missing();continue;}
+   id=matches[0].id;rec=await lookup(id);if(!rec)continue;
   }
-  const rec=await get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits&fmt=json`,'MusicBrainz');if(!rec)continue;
-  if(rec.body.id!==id||/\b(instrumental|karaoke)\b/i.test(t.title+' '+(rec.body.disambiguation||''))||norm(rec.body.title)!==norm(t.title)||!artistMatches(t.artist,rec.body['artist-credit']||[])){cache.languages[key]={labels:[],until:now()+DAY};continue;}
+  if(rec.notFound){missing();continue;}
+  // Merged IDs may differ; exact title, artist and version checks still apply.
+  if(!uuid(rec.body.id)||/\b(instrumental|karaoke)\b/i.test(t.title+' '+(rec.body.disambiguation||''))||norm(rec.body.title)!==norm(t.title)||!artistMatches(t.artist,rec.body['artist-credit']||[])){missing();continue;}
+  id=rec.body.id;
   const works=(rec.body.relations||[]).filter(r=>r.type==='performance'&&uuid(r.work?.id)).map(r=>r.work.id);
-  const labels=[];let complete=true;
+  const labels=[];let complete=true,missingWork=false;
   // Medleys can have many works; leave them unknown rather than attach partial language evidence.
   if(works.length>3){cache.languages[key]={labels:[],until:now()+DAY};continue;}
-  for(const work of works){const result=await get(`https://musicbrainz.org/ws/2/work/${work}?fmt=json`,'MusicBrainz');if(result&&result.body.id===work)labels.push(...workLanguages(result.body));else complete=false;}
+  for(const work of works){const result=await get(`https://musicbrainz.org/ws/2/work/${work}?fmt=json`,'MusicBrainz');if(result?.notFound){missingWork=true;}else if(result&&uuid(result.body.id))labels.push(...workLanguages(result.body));else complete=false;}
+  if(missingWork){missing();continue;}
   if(complete){cache.languages[key]={recordingId:id,labels:[...new Set(labels)],until:now()+(labels.length?30*DAY:DAY)};if(labels.length)d.verifiedLanguage++;else d.unknownLanguage++;}
  }
  for(const [key,q] of Object.entries(cache.queries))if(q.until<=now()||!active.has(key))delete cache.queries[key];

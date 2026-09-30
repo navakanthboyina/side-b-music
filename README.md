@@ -194,3 +194,10 @@ Validation: 89 automated Node tests pass, including redirected key protection, n
 ### MusicBrainz canonical redirects (musicbrainz-redirect-1)
 
 Live diagnostics showed MusicBrainz HTTP 301 responses were blocked before language checks completed. The recording search now uses the canonical path without a trailing slash. The provider wrapper may follow one HTTPS redirect within `musicbrainz.org/ws/2/`, counting the extra request and retaining MusicBrainz request spacing. Off-site redirects, HTTP downgrades, non-API paths and repeated redirects remain blocked. Last.fm credential-bearing requests still never follow redirects. Existing discovery-runtime drafts remain compatible. This fixes redirect handling, not missing metadata or regional recommendation coverage.
+
+
+### Missing MusicBrainz entities (musicbrainz-missing-1)
+
+HTTP 404 on an individual recording/work lookup no longer pauses all MusicBrainz requests. A missing recording ID triggers one exact title-and-artist search. Ambiguous/no matches remain unknown. Merged IDs still require exact song identity checks. Missing work data is cached as unknown for one day; it cannot establish a language. Genuine outages keep their backoff. Existing drafts remain compatible for their normal lifetime. Diagnostics separate `notFound.recording`, `notFound.work` and `recordingSearchFallbacks`. This fixes lookup recovery, not missing regional catalog coverage.
+
+GitHub Actions runs the Node regression suite and both Cloudflare workerd request checks on pushes and pull requests. No provider keys or Cloudflare deployment credentials are used. Live provider availability and multilingual coverage still need checking after deployment.

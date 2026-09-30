@@ -99,3 +99,34 @@ test('MusicBrainz external redirects and repeated redirects are blocked',async()
   assert(requests<=2);assert.equal(stats.discovery.errors[0].category,'redirect_blocked');
  }
 });
+
+test('Missing recording falls back to exact search without pausing MusicBrainz',async()=>{
+ const f=fixture(),orig=f.env.DISCOVERY_FETCH,stats={};
+ const replacement='33333333-3333-4333-8333-333333333333';
+ f.env.DISCOVERY_FETCH=async(u,o)=>{
+  const url=new URL(u);
+  if(url.pathname==='/ws/2/recording/'+recording)return new Response('Not found',{status:404});
+  if(url.pathname==='/ws/2/recording')return Response.json({recordings:[{id:replacement,title:'Discovery','artist-credit':[{name:'Other Singer'}]}]});
+  if(url.pathname==='/ws/2/recording/'+replacement)return Response.json({id:replacement,title:'Discovery','artist-credit':[{name:'Other Singer'}],relations:[{type:'performance',work:{id:work}}]});
+  return orig(u,o);
+ };
+ const songs=await discoverSongs(f.state,f.env,{...f.options,stats});
+ assert.equal(songs.length,1);assert.equal(songs[0].evidence.recordingId,replacement);
+ assert.equal(stats.discovery.notFound.recording,1);assert.equal(stats.discovery.recordingSearchFallbacks,1);
+ assert.equal(f.state.songDiscovery.backoff.MusicBrainz,undefined);assert.deepEqual(stats.discovery.errors,[]);
+});
+test('Missing work is cached as unknown rather than pausing other checks',async()=>{
+ const f=fixture(),orig=f.env.DISCOVERY_FETCH,stats={};let missingCalls=0;
+ f.env.DISCOVERY_FETCH=async(u,o)=>{if(u.includes('/work/')){missingCalls++;return Response.json({error:'Not Found'},{status:404});}return orig(u,o);};
+ assert.equal((await discoverSongs(f.state,f.env,{...f.options,stats})).length,0);
+ await discoverSongs(f.state,f.env,{...f.options,stats});assert.equal(missingCalls,1);
+ assert.equal(stats.discovery.notFound.work,1);assert.equal(f.state.songDiscovery.backoff.MusicBrainz,undefined);
+});
+test('Merged recording IDs retain exact song identity validation',async()=>{
+ const f=fixture(),orig=f.env.DISCOVERY_FETCH;
+ f.env.DISCOVERY_FETCH=async(u,o)=>{
+  const r=await orig(u,o);if(!u.includes('/recording/'))return r;
+  const body=await r.json();body.id='33333333-3333-4333-8333-333333333333';return Response.json(body);
+ };
+ assert.equal((await discoverSongs(f.state,f.env,f.options)).length,1);
+});
