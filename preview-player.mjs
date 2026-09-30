@@ -27,7 +27,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
   const mine=++ticket;stop();panel.hidden=false;doc.body.classList.add('has-preview');fallback.hidden=true;source.hidden=true;source.removeAttribute('href');source.textContent='';attribution.textContent='';
   const song={artist:button.dataset.artist,title:button.dataset.title};currentSong=song;
   fallback.href='https://www.youtube.com/results?search_query='+encodeURIComponent(song.artist+' '+song.title+' official');
-  panel.querySelector('.player-title').textContent=song.title;panel.querySelector('.player-artist').textContent=song.artist;status.textContent='Finding a preview · Apple first, then Deezer…';
+  panel.querySelector('.player-title').textContent=song.title;panel.querySelector('.player-artist').textContent=song.artist;status.textContent='Finding a preview · Deezer first, then Apple…';
   try{
    const {preview,diagnostics,artwork}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
    if(artwork){try{const a=new URL(artwork);if(a.protocol==='https:'&&!a.username&&!a.password&&!a.port&&(/^(?:[a-z0-9-]+\.)+mzstatic\.com$/.test(a.hostname)||['cdn-images.dzcdn.net','coverartarchive.org'].includes(a.hostname))){const art=button.closest('.music-card')?.querySelector('.track-art');if(art){let img=art.querySelector('img');if(!img){img=doc.createElement('img');img.className='catalog-art';img.alt='';img.style.cssText='width:100%;height:100%;object-fit:cover';art.prepend(img);}img.src=a.href;img.addEventListener('error',()=>img.remove(),{once:true});}}}catch{}}

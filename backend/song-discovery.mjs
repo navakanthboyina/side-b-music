@@ -20,6 +20,10 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  cache.queries ||= {};cache.languages ||= {};cache.backoff ||= {};cache.secondary ||= {};cache.seedIds ||= {};cache.providerNext ||= {};cache.identities ||= {};
  stats.discovery ||= {requests:0,cacheHits:0,verifiedLanguage:0,unknownLanguage:0,errors:[]};
  const d=stats.discovery,transient={};
+ cache.lastFailures ||= {};
+ const snapshotCooldowns=()=>{d.providerCooldowns=Object.entries(cache.backoff).filter(([,until])=>until>now()).map(([provider,until])=>({provider,until,retryAfterSeconds:Math.ceil((until-now())/1000),cause:cache.lastFailures[provider]||{category:'unknown_legacy_cooldown'}}));};
+ const recordFailure=error=>{const saved={...error,at:now()};cache.lastFailures[error.provider]=saved;d.errors.push(saved);snapshotCooldowns();};
+ snapshotCooldowns();
  const queries=()=>{
   const merged={...cache.queries,...transient};
   for(const [key,q] of Object.entries(cache.secondary))if(q.until>now()){
@@ -51,7 +55,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
      d.redirectsFollowed=(d.redirectsFollowed||0)+1;
      return get(target.href,provider,redirects+1);
     }
-    cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'redirect_blocked',status:r.status});return null;
+    cache.backoff[provider]=now()+60000;recordFailure({provider,category:'redirect_blocked',status:r.status});return null;
    }
    const entity=new URL(url).pathname.match(/^\/ws\/2\/(recording|work)\/([0-9a-f-]+)\/?$/i);
    if(provider==='MusicBrainz'&&r.status===404&&entity&&uuid(entity[2])){
@@ -59,10 +63,11 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
     return {notFound:true,body:{},ttl:DAY};
    }
    let body;try{body=await r.json();}catch{
-    cache.backoff[provider]=now()+(r.status===429||r.status===503?300000:60000);
-    d.errors.push({provider,category:r.ok?'invalid_json':'http_error',status:r.status});return null;
+    const retry=r.headers.get('retry-after'),seconds=Number(retry),until=retry?(Number.isFinite(seconds)?now()+seconds*1000:Date.parse(retry)):0;
+    cache.backoff[provider]=Math.max(now()+(r.status===429||r.status===503?300000:60000),Number.isFinite(until)?until:0);
+    recordFailure({provider,category:r.ok?'invalid_json':'http_error',status:r.status});return null;
    }
-   if(!body||typeof body!=='object'){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:'invalid_response',status:r.status});return null;}
+   if(!body||typeof body!=='object'){cache.backoff[provider]=now()+60000;recordFailure({provider,category:'invalid_response',status:r.status});return null;}
    // A missing reference track is not a provider outage. Continue with other taste songs.
    if(provider==='Last.fm'&&[6,7].includes(body.error))return {body:{similartracks:{track:[]}},ttl:3600000};
    if(!r.ok||body.error){
@@ -70,12 +75,12 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
     const retry=r.headers.get('retry-after'),seconds=Number(retry);
     const until=retry?(Number.isFinite(seconds)?now()+seconds*1000:Date.parse(retry)):0;
     cache.backoff[provider]=Math.max(now()+(rate?300000:60000),Number.isFinite(until)?until:0);
-    d.errors.push({provider,status:r.status,code:typeof body.error==='number'?body.error:undefined});return null;
+    recordFailure({provider,category:'http_or_api_error',status:r.status,code:typeof body.error==='number'?body.error:undefined});return null;
    }
    const cc=r.headers.get('cache-control')||'';
    const maxAge=cc.match(/(?:^|,)\s*max-age=(\d+)/i);
    return {body,ttl:/no-store|no-cache/i.test(cc)?0:maxAge?Math.min(7*DAY,Number(maxAge[1])*1000):DAY};
-  }catch(error){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:['TimeoutError','AbortError'].includes(error?.name)?'timeout':'network_or_request',errorName:['TypeError','Error','TimeoutError','AbortError'].includes(error?.name)?error.name:'Error'});return null;}
+  }catch(error){cache.backoff[provider]=now()+60000;recordFailure({provider,category:['TimeoutError','AbortError'].includes(error?.name)?'timeout':'network_or_request',errorName:['TypeError','Error','TimeoutError','AbortError'].includes(error?.name)?error.name:'Error'});return null;}
  }
  const active=new Map([...(state.seedSongs||[]),...Object.values(state.songRatings||{}).filter(t=>t.value==='replay')].filter(t=>!state.songRatings?.[keyOf(t)]||state.songRatings[keyOf(t)].value==='replay').map(t=>[keyOf(t),t]));
  const deniedKeys=new Set([...excluded,...Object.keys(state.songRatings||{}),...Object.keys(state.familiar||{}),...(state.seedSongs||[]).map(keyOf)]);
@@ -121,8 +126,8 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  const backlog=()=>Object.entries(queries()).filter(([k,v])=>v.until>now()&&active.has(k)&&!cappedReferences.has(k))
   .flatMap(([,v])=>v.tracks).filter(t=>!denied(t)&&!(cache.languages[keyOf(t)]?.until>now()));
  // Drain saved candidates before purchasing more metadata work with external requests.
- const backlogFirst=needsLanguage&&backlog().length>=12;
- d.scheduling={mode:backlogFirst?'enrich_saved_candidates':'discover_then_enrich',backlogBefore:backlog().length,lastfmRequestLimit:6};
+ const backlogFirst=needsLanguage&&backlog().length>=12&&!(cache.backoff.MusicBrainz>now());
+ d.scheduling={mode:backlogFirst?'enrich_saved_candidates':'discover_then_enrich',backlogBefore:backlog().length,lastfmRequestLimit:6,metadataPaused:cache.backoff.MusicBrainz>now()};
  for(const a of (lastfmEnabled(env)&&!backlogFirst?anchors:[]).filter(a=>!cappedReferences.has(keyOf(a))).slice(0,6)){
   const key=keyOf(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
   const u=new URL('https://ws.audioscrobbler.com/2.0/');

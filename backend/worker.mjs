@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'playback-artwork-1';
+export const RECOMMENDER_BUILD = 'provider-causes-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -157,7 +157,7 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'apple-backoff-1','song-identity-1','preview-match-1','familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'playback-artwork-1','apple-backoff-1','song-identity-1','preview-match-1','familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=cleanDraft((draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar),state).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
@@ -238,6 +238,8 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
       const missing=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.missingLanguage||0),0),filtered=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.languageFilter||0),0);
       throw Object.assign(fail(422,`No new ${language} picks were approved. ${missing?'AI omitted valid language labels for '+missing+' entries. ':''}${filtered?filtered+' entries were another language or Unknown. ':''}${selectionStats.attempts.some(a=>a.formatError)?'Some AI replies had an invalid format. ':''}The previous batch is unchanged. Try All languages or refresh for other playlist references.`),{selectionStats});
     }
+    const metadataPause=selectionStats.discovery?.providerCooldowns?.find(p=>p.provider==='MusicBrainz');
+    if(!picks.length&&metadataPause)throw Object.assign(fail(422,`MusicBrainz language checks are paused${metadataPause.cause?.status?' after HTTP '+metadataPause.cause.status:''}. Retry in ${metadataPause.retryAfterSeconds} seconds, or choose Mixed to include songs with unverified language. No new qualifying picks; the previous batch is unchanged.`),{selectionStats});
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,30000,picks.some(t=>t.reusedRating)?picks:shortlist);
     if(modern&&picks.length===12){

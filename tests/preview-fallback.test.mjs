@@ -6,14 +6,14 @@ const apple={trackId:42,artistName:song.artist,trackName:song.title,previewUrl:'
 test('India preview wins; US is tried when India has no exact match',async()=>{
  for(const winning of ['IN','US']){
   const calls=[];
-  const preview=await findPreview(song,async input=>{const u=new URL(input);calls.push(u.searchParams.get('country'));return Response.json({results:u.searchParams.get('country')===winning?[apple]:[]});});
+  const preview=await findPreview(song,async input=>{const u=new URL(input);if(u.hostname==='api.deezer.com')return Response.json({data:[]});calls.push(u.searchParams.get('country'));return Response.json({results:u.searchParams.get('country')===winning?[apple]:[]});});
   assert.equal(preview.source,'iTunes');assert.equal(preview.country,winning);
   assert.deepEqual(calls,winning==='IN'?['IN']:['IN','US']);assert.match(preview.attribution,/courtesy of iTunes/);
  }
 });
-test('Apple 429 falls back directly to Deezer without another country request',async()=>{
+test('Deezer match avoids Apple entirely',async()=>{
  const calls=[];const p=await findPreview(song,async input=>{const u=new URL(input);calls.push(u.hostname);return u.hostname==='itunes.apple.com'?new Response('',{status:429}):Response.json({data:[{id:23,artist:{name:song.artist},title:song.title,preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'}]});});
- assert.equal(p.source,'Deezer');assert.deepEqual(calls,['itunes.apple.com','api.deezer.com']);
+ assert.equal(p.source,'Deezer');assert.deepEqual(calls,['api.deezer.com']);
 });
 test('Wrong versions, wrong artists and unsafe media/store URLs are rejected',async()=>{
  for(const track of [{...apple,trackName:'Test Song (Remix)'},{...apple,artistName:'Other Singer'},{...apple,previewUrl:'https://evil.example/clip.mp3'},{...apple,trackViewUrl:'https://music.apple.com.evil.example/song'}]){
@@ -26,12 +26,12 @@ test('Both provider failures return no preview without inventing a playable trac
 });
 test('Apple multiple credits match a credited singer and record a safe diagnostic',async()=>{
  const diagnostics={};const p=await findPreview(song,async()=>Response.json({results:[{...apple,artistName:'Composer & Test Singer'}]}),diagnostics);
- assert.equal(p.source,'iTunes');assert.equal(diagnostics.attempts[0].outcome,'found');assert.equal(diagnostics.attempts[0].identityMatches,1);
+ assert.equal(p.source,'iTunes');assert.equal(diagnostics.attempts.at(-1).outcome,'found');assert.equal(diagnostics.attempts.at(-1).identityMatches,1);
  assert(!JSON.stringify(diagnostics).includes(song.title));
 });
 test('Preview diagnostics distinguish Apple 429 from absent Deezer identity',async()=>{
  const d={};assert.equal(await findPreview(song,async u=>new URL(u).hostname==='itunes.apple.com'?new Response('',{status:429}):Response.json({data:[]}),d),null);
- assert.deepEqual(d.attempts.map(a=>a.outcome),['http_error','no_matching_song']);assert.equal(d.attempts[0].status,429);
+ assert.deepEqual(d.attempts.map(a=>a.outcome),['no_matching_song','http_error']);assert.equal(d.attempts.at(-1).status,429);
 });
 test('Multi-credit Deezer search retries one credited singer, without accepting a different song',async()=>{
  const target={artist:'Singer A, Singer B, Singer C',title:'Track'},calls=[],d={};
@@ -60,6 +60,11 @@ test('Soundtrack attribution is matched conservatively and mismatch reasons are 
 });
 test('Apple searches one credited performer and core soundtrack title but still validates returned identity',async()=>{
  const t={artist:'Test Singer, Other Singer',title:'Test Song (From "Film")'};
- const p=await findPreview(t,async input=>{const u=new URL(input);assert.equal(u.searchParams.get('term'),'Test Singer Test Song');return Response.json({results:[apple]});});
+ const p=await findPreview(t,async input=>{const u=new URL(input);if(u.hostname==='api.deezer.com')return Response.json({data:[]});assert.equal(u.searchParams.get('term'),'Test Singer Test Song');return Response.json({results:[apple]});});
  assert.equal(p.source,'iTunes');
+});
+test('Deezer HTTP failure falls through to Apple and both failures expose YouTube eligibility',async()=>{
+ const d={};const p=await findPreview(song,async u=>u.includes('deezer')?new Response('',{status:503}):Response.json({results:[apple]}),d);
+ assert.equal(p.source,'iTunes');assert.deepEqual(d.attempts.map(a=>a.provider),['Deezer','iTunes']);
+ const errors={};assert.equal(await findPreview(song,async()=>new Response('',{status:429}),errors),null);assert.deepEqual(errors.attempts.map(a=>a.provider),['Deezer','iTunes']);
 });

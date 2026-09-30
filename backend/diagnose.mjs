@@ -59,6 +59,7 @@ async function finish(){
  if(!report.events.length)findings.push('No Worker events captured. Check the Wrangler login/connection; absence of events is not proof of success.');
  const latest=report.snapshots.at(-1)?.diagnostics;
  if(latest?.ratedFallback)findings.push('Rated-song fallback: '+JSON.stringify(latest.ratedFallback));
+ if(latest?.discovery?.providerCooldowns?.length)findings.push('Provider cooldown causes: '+JSON.stringify(latest.discovery.providerCooldowns));
  if(latest?.discovery?.scheduling)findings.push('Discovery scheduling: '+JSON.stringify(latest.discovery.scheduling));
  if(latest?.discovery?.stopReason)findings.push('Discovery stopped: '+latest.discovery.stopReason);
  if(latest?.ai?.attempts)findings.push('AI provider attempts: '+JSON.stringify(latest.ai.attempts));

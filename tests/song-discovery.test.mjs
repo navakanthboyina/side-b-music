@@ -195,3 +195,12 @@ test('Last.fm cap applies to entire multi-pool refresh, preserving enrichment ca
  }
  assert.equal(stats.discovery.requestsByProvider['Last.fm'],6);assert.equal(stats.discovery.requests,6);
 });
+test('MusicBrainz HTML 503 preserves its cause, honors Retry-After and recovers after expiry',async()=>{
+ const f=fixture(),good=f.env.DISCOVERY_FETCH;let failed=false;
+ f.env.DISCOVERY_FETCH=async(url,options)=>{if(url.includes('musicbrainz.org')&&!failed){failed=true;return new Response('Unavailable',{status:503,headers:{'retry-after':'600'}});}return good(url,options);};
+ const first={};await discoverSongs(f.state,f.env,{...f.options,stats:first});
+ assert.equal(first.discovery.providerCooldowns[0].cause.status,503);assert.equal(first.discovery.providerCooldowns[0].retryAfterSeconds,600);
+ const second={};await discoverSongs(f.state,f.env,{...f.options,stats:second});
+ assert.equal(second.discovery.providerCooldowns[0].cause.status,503);assert.equal(second.discovery.requests,0);assert(!JSON.stringify(second).includes('never-log-this'));
+ await f.options.sleep(600001);const third={};const rows=await discoverSongs(f.state,f.env,{...f.options,deadline:900000,stats:third});assert.equal(rows.length,1);assert.equal(third.discovery.providerCooldowns.length,0);
+});

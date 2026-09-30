@@ -5,7 +5,12 @@ export function catalogFetcher(env,now=Date.now){
  return async(url,options)=>{
   const host=new URL(url).hostname,at=now(),key='provider-cooldown:'+host;
   const paused=await q(env.DB,'SELECT count,expires FROM limits WHERE key=?',key).first();
-  if(paused?.expires>at)return throttled('provider_cooldown',(paused.expires-at)/1000);
+  if(paused?.expires>at){
+   const cause=await q(env.DB,'SELECT count,expires FROM limits WHERE key=?','provider-failure:'+host).first();
+   const r=throttled('provider_cooldown',(paused.expires-at)/1000);
+   if(cause){r.headers.set('x-munna-original-status',String(cause.count));r.headers.set('x-munna-failure-at',String(cause.expires-7*86400000));}
+   return r;
+  }
   // A rolling room window prevents double bursts across wall-clock minute boundaries.
   const budgetKey='catalog-window:'+host;
   const permit=await q(env.DB,`INSERT INTO limits(key,count,expires) VALUES(?,1,?)
@@ -22,6 +27,7 @@ export function catalogFetcher(env,now=Date.now){
   if(response.status===429||response.status===503){
    const retry=response.headers.get('retry-after'),seconds=Number(retry);
    const until=retry?(Number.isFinite(seconds)?at+seconds*1000:Date.parse(retry)):0;
+   await q(env.DB,`INSERT INTO limits(key,count,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET count=excluded.count,expires=excluded.expires`,'provider-failure:'+host,response.status,at+7*86400000).run();
    const failures=Math.min(5,(paused?.count||0)+1);
    const delay=300000*2**(failures-1);
    await q(env.DB,`INSERT INTO limits(key,count,expires) VALUES(?,?,?)

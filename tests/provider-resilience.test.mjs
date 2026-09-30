@@ -62,3 +62,8 @@ test('Internal enrichment budget failures never poison the on-demand preview cac
  const resource=await resolveResource(DB,song,async u=>u.includes('apple')?Response.json({results:[]}):Response.json({data:[{id:1,title:'Track',artist:{name:'Singer'},album:{cover_big:'https://cdn-images.dzcdn.net/images/cover/test/500x500.jpg'},preview:'https://cdn-preview-a.dzcdn.net/test.mp3'}]}));
  assert.equal(resource.preview.source,'Deezer');assert.equal(resource.artworkSource,'Deezer');assert.match(resource.artwork,/cdn-images/);DB.sqlite.close();
 });
+test('Catalog cooldown records the originating HTTP status and time across requests',async()=>{
+ const DB=db(),now=100000;const get=catalogFetcher({DB,CATALOG_FETCH:async()=>new Response('',{status:503})},()=>now);
+ await get('https://itunes.apple.com/search');const r=await get('https://itunes.apple.com/search');
+ assert.equal(r.headers.get('x-munna-original-status'),'503');assert.equal(r.headers.get('x-munna-failure-at'),String(now));assert.equal(r.headers.get('retry-after'),'300');DB.sqlite.close();
+});

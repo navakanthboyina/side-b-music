@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'playback-artwork-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'provider-causes-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'playback-artwork-1');
- assert.equal(state.pendingSelectionStats.build,'playback-artwork-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'provider-causes-1');
+ assert.equal(state.pendingSelectionStats.build,'provider-causes-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -710,7 +710,7 @@ test('Deezer search result without audio falls through to a matched Apple previe
   return Response.json({results:[{trackId:99,artistName:'Found Artist',trackName:'Found Song',previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=99'}]});
  };
  const result=await (await s.call('/preview',{provider:'deezer',id:42})).json();
- assert.equal(result.preview.source,'iTunes');assert.equal(result.diagnostics.attempts.length,1);s.sqlite.close();
+ assert.equal(result.preview.source,'iTunes');assert.equal(result.diagnostics.attempts.length,2);s.sqlite.close();
 });
 test('AI quota failure publishes a full deterministic modern batch and preserves taste',async()=>{
  const s=setup(),state=savedDiscoveryFixture(s),originalSeeds=state.seedSongs;
@@ -728,10 +728,10 @@ test('Actual playback activity is idempotent, separate from ratings, and never c
  assert.deepEqual((await s.state()).songRatings,before.songRatings);
  assert.equal((await s.call('/activity',{...body,title:'Fake',eventId:'22222222-2222-4222-8222-222222222222'})).status,400);s.sqlite.close();
 });
-test('Preview mappings cache without changing ratings, no-store is respected, and Apple precedes Deezer',async()=>{
- const s=setup();let calls=0;s.env.CATALOG_FETCH=async url=>{calls++;assert.equal(new URL(url).hostname,'itunes.apple.com');return Response.json({results:[{trackId:42,artistName:fixture.artist,trackName:fixture.title,previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=42'}]});};
+test('Preview mappings cache without changing ratings, no-store is respected, and Deezer precedes Apple',async()=>{
+ const s=setup();let calls=0;s.env.CATALOG_FETCH=async url=>{calls++;if(new URL(url).hostname==='api.deezer.com')return Response.json({data:[]});return Response.json({results:[{trackId:42,artistName:fixture.artist,trackName:fixture.title,previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=42'}]});};
  assert.equal((await (await s.call('/preview',fixture)).json()).preview.source,'iTunes');
- assert.equal((await (await s.call('/preview',fixture)).json()).diagnostics.cacheHit,true);assert.equal(calls,1);assert.equal(s.calls().aiCalls,0);
+ assert.equal((await (await s.call('/preview',fixture)).json()).diagnostics.cacheHit,true);assert.equal(calls,2);assert.equal(s.calls().aiCalls,0);
  s.sqlite.exec('DELETE FROM song_resources');s.env.CATALOG_FETCH=async()=>Response.json({results:[]},{headers:{'cache-control':'no-store'}});
  await s.call('/preview',fixture);assert.equal(s.sqlite.prepare('SELECT count(*) AS n FROM song_resources').get().n,0);s.sqlite.close();
 });

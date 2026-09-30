@@ -106,3 +106,11 @@ This reduces avoidable requests; it cannot force Apple to accept requests. `npm 
 Build `playback-artwork-1` sends only the selected diverse batch to AI for reordering. Internal enrichment budget exhaustion is reported as `lookup_budget` and is never cached as a provider failure. Old cached generic request failures are retried on demand. Matched Deezer covers are saved alongside available previews and returned on preview lookup so the frontend can update the cover. Provider availability and actual browser audio playback remain external dependencies.
 
 Shared taste has a Clear results button (does not delete shared likes) and an official Shazam link. Identify in Shazam, then search the title/artist here and explicitly add the catalog result. This is a manual handoff, not an embedded recognition SDK or automatic import.
+
+### Current preview order and provider diagnostics
+
+Build `provider-causes-1` uses Deezer first for song preview searches, Apple (IN then US) if Deezer fails or has no playable match, then a YouTube search link if neither succeeds. Existing positive preview mappings are reused; selecting a specific catalog search result can use its known preview directly.
+
+`npm run diagnose` reports `discovery.providerCooldowns`: provider, original failure category/status/time, expiry and retry seconds. Legacy pauses whose cause was not saved explicitly report `unknown_legacy_cooldown`. MusicBrainz HTML error responses now honor Retry-After too. During MusicBrainz backoff, Last.fm discovery can continue instead of being suppressed by a metadata backlog. This does not infer missing song languages: strict language discovery may still wait for metadata recovery. Mixed and explicitly enabled familiar-song fallback remain available.
+
+Preview cooldown attempts include `originalStatus` and `failureAt` for new Apple/Deezer pauses, alongside `limitSource` and `retryAfterSeconds`. Internal `lookup_budget`, failed network requests and upstream HTTP errors remain distinct. No API credentials, query URLs or provider response bodies are included.

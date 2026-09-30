@@ -46,12 +46,29 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
  const primaryCredit=credits(song.artist).find(c=>c!==song.artist.trim())||song.artist;
  // Search with one performer; validate the returned full song identity below.
  const appleTerm=primaryCredit+' '+String(song.title).replace(/\s*\(From\s+["“][^"”]+["”]\)\s*$/i,'');
+ // Multi-performer credits can over-constrain a catalog search. Retry once with
+ // one credited performer, while retaining exact title and artist validation.
+ const queries=[...new Set([song.artist+' '+song.title,primaryCredit+' '+song.title])];
+ for(let i=0;i<queries.length;i++){
+  const attempt={provider:'Deezer',queryMode:i?'primary_credit':'full_credits'};diagnostics.attempts.push(attempt);
+  try{
+   const response=await fetchCatalog('https://api.deezer.com/search?'+new URLSearchParams({q:queries[i],limit:'25'}),{timeoutMs:3500});
+   attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';attempt.limitSource=response.headers.get('x-munna-limit-source')||'upstream';attempt.retryAfterSeconds=Number(response.headers.get('retry-after'))||undefined;attempt.originalStatus=Number(response.headers.get('x-munna-original-status'))||undefined;attempt.failureAt=Number(response.headers.get('x-munna-failure-at'))||undefined;break;}
+   const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
+   const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';break;}
+   const matches=previewMatches(data.data,song,attempt);
+   attempt.rows=data.data.length;attempt.identityMatches=matches.length;
+   const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
+   if(t){const art=safeArtwork(t.album?.cover_xl||t.album?.cover_big||t.album?.cover_medium);if(art){resource.artwork=art;resource.artworkSource='Deezer';}diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};
+    return {url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id};}
+  }catch(error){lookupFailure(error,attempt,diagnostics);break;}
+ }
  for(const country of PREVIEW_COUNTRIES){
   const attempt={provider:'iTunes',country};diagnostics.attempts.push(attempt);
   try{
    const response=await fetchCatalog('https://itunes.apple.com/search?'+new URLSearchParams({term:appleTerm,entity:'song',media:'music',country,limit:'15'}),{timeoutMs:3500});
    attempt.status=response.status;
-   if(!response.ok){attempt.outcome='http_error';attempt.limitSource=response.headers.get('x-munna-limit-source')||'upstream';attempt.retryAfterSeconds=Number(response.headers.get('retry-after'))||undefined;break;}
+   if(!response.ok){attempt.outcome='http_error';attempt.limitSource=response.headers.get('x-munna-limit-source')||'upstream';attempt.originalStatus=Number(response.headers.get('x-munna-original-status'))||undefined;attempt.failureAt=Number(response.headers.get('x-munna-failure-at'))||undefined;attempt.retryAfterSeconds=Number(response.headers.get('retry-after'))||undefined;break;}
    const cc=response.headers.get('cache-control')||'';
    if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;
    const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
@@ -66,22 +83,6 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    if(t){diagnostics.selectedProvider='iTunes';return {...applePreview(t),country};}
   }catch(error){lookupFailure(error,attempt,diagnostics);break;}
  }
- // Multi-performer credits can over-constrain a catalog search. Retry once with
- // one credited performer, while retaining exact title and artist validation.
- const queries=[...new Set([song.artist+' '+song.title,primaryCredit+' '+song.title])];
- for(let i=0;i<queries.length;i++){
-  const attempt={provider:'Deezer',queryMode:i?'primary_credit':'full_credits'};diagnostics.attempts.push(attempt);
-  try{
-   const response=await fetchCatalog('https://api.deezer.com/search?'+new URLSearchParams({q:queries[i],limit:'25'}),{timeoutMs:3500});
-   attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';return null;}
-   const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
-   const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';return null;}
-   const matches=previewMatches(data.data,song,attempt);
-   attempt.rows=data.data.length;attempt.identityMatches=matches.length;
-   const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
-   if(t){const art=safeArtwork(t.album?.cover_xl||t.album?.cover_big||t.album?.cover_medium);if(art){resource.artwork=art;resource.artworkSource='Deezer';}diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};
-    return {url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id};}
-  }catch(error){lookupFailure(error,attempt,diagnostics);return null;}
- }
+
  return null;
 }
