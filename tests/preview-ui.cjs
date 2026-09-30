@@ -9,9 +9,13 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  p.audio.dispatchEvent(new w.Event('waiting'));assert(!p.panel.classList.contains('is-playing'));p.audio.dispatchEvent(new w.Event('playing'));assert(p.panel.classList.contains('is-playing'));p.audio.pause();assert(!p.panel.classList.contains('is-playing'));p.audio.dispatchEvent(new w.Event('ended'));assert.match(p.panel.textContent,/Preview finished/);
  p.panel.querySelector('.player-close').click();assert(p.panel.hidden);assert.equal(p.audio.getAttribute('src'),null);
  buttons[0].click();p.panel.querySelector('.player-close').click();resolveFirst({preview:{url:'https://cdn-preview-a.dzcdn.net/first.mp3',link:'https://www.deezer.com/track/1'}});await new Promise(r=>setImmediate(r));assert.equal(plays,1);assert(p.panel.hidden);
- buttons[0].click();resolveFirst({preview:null});await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/No matching Deezer preview/);assert.equal(plays,1);
+ buttons[0].click();resolveFirst({preview:null});await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/No matching preview/);assert.equal(plays,1);
  buttons[0].click();resolveFirst({preview:{url:'https://evil.example/music.mp3',link:'https://www.deezer.com/track/1'}});await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/Preview unavailable/);assert.equal(plays,1);
  p.audio.play=()=>Promise.reject(Error('Gesture required'));buttons[1].click();await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/press play to start/);assert(!p.panel.classList.contains('is-playing'));
  buttons[1].dataset.provider='deezer';buttons[1].dataset.id='42';buttons[1].click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastLookup,{provider:'deezer',id:42});
+
+ buttons[0].click();resolveFirst({preview:{source:'iTunes',url:'https://audio-ssl.itunes.apple.com/clip.m4a',link:'https://music.apple.com/in/album/example/123?i=456'}});
+ await new Promise(r=>setImmediate(r));assert(p.audio.src.includes('itunes.apple.com'));assert.match(p.panel.textContent,/provided courtesy of iTunes/);
+ assert.equal(p.panel.querySelector('.player-source img').alt,'Download on iTunes');assert(p.panel.querySelector('.player-fallback').href.startsWith('https://www.youtube.com/results?'));
  dom.window.close();console.log('PASS: preview events, one-player switching, stale lookups and closing while loading.');
 })().catch(e=>{console.error(e);process.exitCode=1});

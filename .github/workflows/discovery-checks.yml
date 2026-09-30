@@ -18,3 +18,6 @@ jobs:
       - run: node --check backend/diagnose.mjs
       - run: node --test tests/*.test.mjs
       - run: npm run test:runtime --prefix backend
+      - run: npm install --prefix /tmp/grooves-ui --no-audit --no-fund jsdom@26.1.0
+      - run: NODE_PATH=/tmp/grooves-ui/node_modules node tests/preview-ui.cjs
+      - run: NODE_PATH=/tmp/grooves-ui/node_modules node tests/shared-ui.cjs

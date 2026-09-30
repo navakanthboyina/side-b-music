@@ -1,4 +1,4 @@
-import {installPreviewPlayer} from './preview-player.mjs';
+import {installPreviewPlayer} from './preview-player.mjs?v=preview-cpu-1';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm=s=>s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 const key=t=>'track:'+t.artist.split(/\s*(?:,|&|;)\s*/).map(norm).sort().join('|')+':'+norm(t.title);

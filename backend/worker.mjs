@@ -3,14 +3,14 @@ import {cachedCatalogFetch} from './catalog-cache.mjs';
 import {searchLanguageCandidates} from './language-search.mjs';
 import {comfortSongs} from './comfort.mjs';
 import {prioritizeLanguageReferences} from './language-discovery.mjs';
-import {findPreview,safePreviewUrl} from './preview.mjs';
+import {findPreview,safePreviewUrl,applePreview} from './preview.mjs';
 import {LANGUAGES,languageSelection} from './languages.mjs';
 import {collectEvidenceCandidates as collectCandidates, memoizedCatalogFetch} from './evidence.mjs';
 import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'discovery-diversity-1';
+export const RECOMMENDER_BUILD = 'preview-cpu-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -26,6 +26,16 @@ async function read(db) {
   if (!row) throw fail(503, 'Shared database needs its migration.');
   return { ...row, state: JSON.parse(row.data) };
 }
+async function readDiscovery(db) {
+  const row=await query(db,"SELECT revision,lease,lease_until,next_refresh,json_remove(data,'$.catalogCache','$.referenceLanguageCache') AS data FROM community WHERE id=1").first();
+  if(!row)throw fail(503,'Shared database needs its migration.');
+  return {...row,state:JSON.parse(row.data)};
+}
+async function readPublic(db) {
+  const row=await query(db,"SELECT revision,lease_until,next_refresh,json_remove(data,'$.catalogCache','$.songDiscovery','$.referenceLanguageCache','$.shown') AS data FROM community WHERE id=1").first();
+  if(!row)throw fail(503,'Shared database needs its migration.');
+  return {...row,state:JSON.parse(row.data)};
+}
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
     comfortSongs:comfortSongs(row.state), comfortShuffle:true, batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.lastSelectionStats || (row.state.pending?.at>Date.now()-86400000?row.state.pending.selectionStats:null), lastSelectionStats:row.state.lastSelectionStats||null,
@@ -37,7 +47,7 @@ async function mutate(db, edit) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const row = await read(db); edit(row.state);
     const result = await query(db, 'UPDATE community SET data=?, revision=revision+1 WHERE id=1 AND revision=?', JSON.stringify(row.state), row.revision).run();
-    if (result.meta.changes) return publicState(await read(db));
+    if (result.meta.changes) return publicState(await readPublic(db));
   }
   throw fail(409, 'Someone else updated the shared profile. Please try again.');
 }
@@ -94,14 +104,14 @@ export function budgetedCatalogFetch(fetcher,stats,deadline) {
   const record=(host,category,status)=>{failures.set(host,(failures.get(host)||0)+1);stats.providerFailures={...(stats.providerFailures||{}),[host]:failures.get(host)};const list=stats.catalogErrors||(stats.catalogErrors=[]);if(list.length<12)list.push({host,category,...(status?{status}:{})});};
   const problem=code=>Object.assign(new Error(code),{catalogCode:code});
   return async(input,options={})=>{
-    let url=new URL(input);
+    let url=new URL(input);const {timeoutMs=8000,...fetchOptions}=options;
     for(let hop=0;hop<=2;hop++) {
       if(url.protocol!=='https:'||!hosts.has(url.hostname)||url.username||url.password)throw problem('unsupported redirect destination');
       if((failures.get(url.hostname)||0)>=3)throw problem('provider paused after repeated failures');
       if(stats.catalogRequests>=30||Date.now()>=deadline)throw problem('request budget exhausted');
       stats.catalogRequests++;
       let response;
-      try {response=await fetcher(url.toString(),{...options,signal:AbortSignal.timeout(Math.max(1,Math.min(8000,deadline-Date.now()))),redirect:'manual'});}
+      try {response=await fetcher(url.toString(),{...fetchOptions,signal:AbortSignal.timeout(Math.max(1,Math.min(timeoutMs,deadline-Date.now()))),redirect:'manual'});}
       catch(error){record(url.hostname,/timeout|abort/i.test(String(error?.name)+' '+String(error?.message))?'timeout':'network_error');throw problem('catalog network request failed');}
       if(response.status>=400)record(url.hostname,'http_error',response.status);
       else if(response.status===200){try{const data=await response.clone().json();if(data?.error){record(url.hostname,'api_error');}}catch{record(url.hostname,'invalid_json');}}
@@ -140,10 +150,10 @@ async function refresh(env,language='Mixed') {
     await limited(env.DB, 'generation:'+new Date(now).toISOString().slice(0,10), 30, now+2*86400000);
     // Advance source rotation even on empty catalog/AI failure, without replacing the saved batch.
     await mutate(env.DB, s=>{s.rotation++;});
-    const row = await read(env.DB), state = row.state;
+    const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const modern=discoveryEnabled(env);
     discoveryCache=state.songDiscovery||{queries:{},languages:{},backoff:{}};state.songDiscovery=discoveryCache;
@@ -229,7 +239,7 @@ async function refresh(env,language='Mixed') {
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
     cacheSaved=true;
-    return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
+    return {...publicState(await readPublic(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
   } finally {
     if(latestStats&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.lastSelectionStats',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(latestStats),lease).run();
     if(discoveryCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(discoveryCache),lease).run();
@@ -271,7 +281,7 @@ export default {
     try {
       if(origin && origin!==env.ALLOWED_ORIGIN)throw fail(403,'Origin not allowed.');
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
-      if(path==='/state'&&request.method==='GET')return reply({...publicState(await read(env.DB)),discoverySetup:discoveryEnabled(env)?'ready':!env.LASTFM_API_KEY?'Last.fm key not configured':'Last.fm public-use approval not confirmed'});
+      if(path==='/state'&&request.method==='GET')return reply({...publicState(await readPublic(env.DB)),discoverySetup:discoveryEnabled(env)?'ready':!env.LASTFM_API_KEY?'Last.fm key not configured':'Last.fm public-use approval not confirmed'});
       if(path==='/admin/ai-check'&&request.method==='POST') {
         if(!env.ADMIN_TOKEN||request.headers.get('authorization')!==`Bearer ${env.ADMIN_TOKEN}`)throw fail(401,'Owner access required.');
         await bodyOf(request);
@@ -317,19 +327,19 @@ export default {
           await ipLimit(request,env.DB);
           const get=budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000);
           try{
-            const url=body.provider==='deezer'?'https://api.deezer.com/track/'+body.id:'https://itunes.apple.com/lookup?id='+body.id+'&entity=song';
+            const url=body.provider==='deezer'?'https://api.deezer.com/track/'+body.id :'https://itunes.apple.com/lookup?id='+body.id+'&entity=song';
             const response=await get(url);if(!response.ok)throw Error();const data=await response.json();
             const raw=body.provider==='deezer'?data:data.results?.find(t=>t.trackId===body.id),song=catalogSong(body.provider,raw);
             if(!song||song.id!==body.id)throw Error();
-            return reply({preview:body.provider==='deezer'?(safePreviewUrl(raw.preview)?{url:safePreviewUrl(raw.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+song.id}:null):await findPreview(song,get)});
+            return reply({preview:body.provider==='deezer'?(safePreviewUrl(raw.preview)?{url:safePreviewUrl(raw.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+song.id}:null):applePreview(raw)||await findPreview(song,get)});
           }catch{throw fail(503,'Could not load this catalog preview. Try the listening links.');}
         }
 
-        const song=cleanSong(body),row=await read(env.DB);
+        const song=cleanSong(body),row=await readPublic(env.DB);
         if(!knownSongs(row.state).some(t=>songKey(t)===songKey(song)))throw fail(400,'Choose a song from the shared dashboard.');
         await ipLimit(request,env.DB);
         try{return reply({preview:await findPreview(song,budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000))});}
-        catch{throw fail(503,'Deezer preview is unavailable right now. Try the listening links instead.');}
+        catch{throw fail(503,'Song previews are unavailable right now. Try the listening links instead.');}
       }
       if(path==='/search'||path==='/taste/add') {
         await ipLimit(request,env.DB);

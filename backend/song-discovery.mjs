@@ -13,6 +13,7 @@ export function workLanguages(work){return [...new Set([...(Array.isArray(work.l
 
 // Private, bounded state: no credential-bearing URLs, raw replies or listening history.
 export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSources=new Set(),existing=[],enrichLanguage=false,language='Mixed',stats={},deadline=Date.now()+45000,now=()=>Date.now(),sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}) {
+ const keys=new WeakMap(),keyOf=t=>{let k=keys.get(t);if(k===undefined){k=songKey(t);keys.set(t,k);}return k;};
  if(!discoveryEnabled(env))throw Error('Song discovery needs a Last.fm key and public-use approval.');
  const cache=state.songDiscovery ||= {queries:{},languages:{},backoff:{},mbNext:0};
  cache.queries ||= {};cache.languages ||= {};cache.backoff ||= {};
@@ -64,27 +65,28 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
    return {body,ttl:/no-store|no-cache/i.test(cc)?0:maxAge?Math.min(7*DAY,Number(maxAge[1])*1000):DAY};
   }catch(error){cache.backoff[provider]=now()+60000;d.errors.push({provider,category:['TimeoutError','AbortError'].includes(error?.name)?'timeout':'network_or_request',errorName:['TypeError','Error','TimeoutError','AbortError'].includes(error?.name)?error.name:'Error'});return null;}
  }
- const active=new Map([...(state.seedSongs||[]),...Object.values(state.songRatings||{}).filter(t=>t.value==='replay')].filter(t=>!state.songRatings?.[songKey(t)]||state.songRatings[songKey(t)].value==='replay').map(t=>[songKey(t),t]));
- const denied=t=>excluded.has(songKey(t))||!!state.songRatings?.[songKey(t)]||!!state.familiar?.[songKey(t)]||(state.seedSongs||[]).some(s=>songKey(s)===songKey(t));
+ const active=new Map([...(state.seedSongs||[]),...Object.values(state.songRatings||{}).filter(t=>t.value==='replay')].filter(t=>!state.songRatings?.[keyOf(t)]||state.songRatings[keyOf(t)].value==='replay').map(t=>[keyOf(t),t]));
+ const deniedKeys=new Set([...excluded,...Object.keys(state.songRatings||{}),...Object.keys(state.familiar||{}),...(state.seedSongs||[]).map(keyOf)]);
+ const denied=t=>deniedKeys.has(keyOf(t));
  const trimCache=()=>{
  for(const [key,q] of Object.entries(cache.queries))if(q.until<=now()||!active.has(key))delete cache.queries[key];
  cache.queries=Object.fromEntries(Object.entries(cache.queries).slice(-40));
  cache.languages=Object.fromEntries(Object.entries(cache.languages).filter(([,v])=>v.until>now()).slice(-400));
  };
  const referenceCounts=new Map();
- for(const t of existing){if(t.evidence?.reference){const k=songKey(t.evidence.reference);referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}}
+ for(const t of existing){if(t.evidence?.reference){const k=keyOf(t.evidence.reference);referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}}
  const cappedReferences=new Set([...referenceCounts].filter(([,n])=>n>=2).map(([k])=>k));
  const available=()=>{
   const rows=[],seen=new Set();
   for(const [key,q] of Object.entries(queries())){
    if(q.until<=now()||!active.has(key)||cappedReferences.has(key))continue;
    for(const t of q.tracks){
-    if(denied(t)||seen.has(songKey(t)))continue;
-    const info=cache.languages[songKey(t)],labels=info?.until>now()?info.labels:[];
+    if(denied(t)||seen.has(keyOf(t)))continue;
+    const info=cache.languages[keyOf(t)],labels=info?.until>now()?info.labels:[];
     if(language!=='Mixed'&&!labels.some(l=>selectedLanguages(language).includes(l)))continue;
-    let a=anchors.find(a=>songKey(a)===key);
+    let a=anchors.find(a=>keyOf(a)===key);
     if(!a){const ref=active.get(key);a={id:Math.max(0,...anchors.map(x=>x.id))+1,artist:ref.artist,title:ref.title,source:state.songRatings?.[key]?.value==='replay'?'liked song':'playlist song'};anchors.push(a);}
-    seen.add(songKey(t));rows.push({...t,anchorIds:[a.id],evidence:{type:'similar_track',provider:'Last.fm',candidateId:t.id,reference:{artist:a.artist,title:a.title},match:t.match,url:t.url,languages:labels,recordingId:info?.recordingId}});
+    seen.add(keyOf(t));rows.push({...t,anchorIds:[a.id],evidence:{type:'similar_track',provider:'Last.fm',candidateId:t.id,reference:{artist:a.artist,title:a.title},match:t.match,url:t.url,languages:labels,recordingId:info?.recordingId}});
    }
   }
   // Interleave starting songs so a large response from one reference cannot monopolize the pool.
@@ -93,14 +95,14 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  };
  let rows=available();
  if(rows.length>=24){d.cacheHits+=rows.length;trimCache();return rows;}
- for(const a of anchors.filter(a=>!cappedReferences.has(songKey(a))).slice(0,6)){
-  const key=songKey(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
+ for(const a of anchors.filter(a=>!cappedReferences.has(keyOf(a))).slice(0,6)){
+  const key=keyOf(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
   const u=new URL('https://ws.audioscrobbler.com/2.0/');
   u.search=new URLSearchParams({method:'track.getsimilar',artist:a.artist,track:a.title,autocorrect:'0',limit:'30',format:'json',api_key:env.LASTFM_API_KEY});
   const response=await get(u.href,'Last.fm');if(!response)continue;
   const raw=response.body.similartracks?.track;
   if(!Array.isArray(raw)){d.errors.push({provider:'Last.fm',category:'invalid_shape'});continue;}
-  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number.isFinite(Number(t.match))&&Number(t.match)>0).map(t=>({artist:t.artist.name.trim(),title:t.name.trim(),id:songKey({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
+  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number.isFinite(Number(t.match))&&Number(t.match)>0).map(t=>({artist:t.artist.name.trim(),title:t.name.trim(),id:keyOf({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
   // Responses that prohibit reuse can serve this request, but never enter the source cache.
   if(response.ttl>0)cache.queries[key]={until:now()+response.ttl,tracks};
   else transient[key]={until:deadline+1,tracks};
@@ -111,7 +113,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  const candidates=Object.values(queries()).filter(q=>q.until>now()).flatMap(q=>q.tracks).filter(t=>!denied(t));
  const visited=new Set();
  for(const t of candidates){
-  const key=songKey(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
+  const key=keyOf(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
   if(d.requests>=24||now()+9000>deadline)break;
   const missing=()=>{cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;};
   const lookup=id=>get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits&fmt=json`,'MusicBrainz');

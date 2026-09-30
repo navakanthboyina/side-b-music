@@ -217,3 +217,15 @@ From backend, run `npm run diagnose`. It watches Wrangler logs for three minutes
 Reports are written to backend/.diagnostics/ (gitignored, local only). They include build, latest selection diagnostics, cooldown, pending count, request outcome and warning/error events. Request headers/bodies and full song profiles are not included. The tool flags CPU-limit errors, canceled requests and invalid AI JSON; it does not change taste, deploy, refresh, or claim to profile CPU hotspots. It requires npm dependencies and an existing Wrangler login. No report is uploaded automatically.
 
 Cloudflare termination may prevent application cleanup and diagnostics from being written. Live tail outcomes remain necessary even when /state reports an older attempt. A test suite passing does not prove an invocation fits the free-plan production CPU limit.
+
+### Storefront preview fallback and CPU reductions (preview-cpu-1)
+
+Dashboard and comfort previews search iTunes India, then the US for an exact title/artist match, then Deezer. Provider errors skip further Apple storefront requests. Each preview search has a 2.5-second request timeout within the overall route budget. Search-result previews retain server-side ID verification; existing Deezer search results play their verified preview directly. Apple lookup results can now play their own preview instead of always searching Deezer.
+
+The player streams at most 30 seconds after a click, identifies the provider, shows the iTunes attribution and linked download badge for Apple previews, and provides a YouTube search link when preview lookup or playback fails. It does not cache/download audio, embed an unverified video, or interpret a storefront country as the song language. There is no guarantee a given song has a preview in either storefront.
+
+GET /state now removes catalog/discovery/language caches in the D1 query before parsing state in Worker JavaScript. Comfort mix sort keys and hashes are computed once per song instead of repeatedly in its comparator. Discovery eligibility precomputes exclusion keys and memoizes song keys rather than repeatedly scanning all seed songs for every candidate. These changes target observed heavy code paths; they are not a claim that production CPU use is now under the free-plan limit.
+
+MusicBrainz 503 responses remain external outages. Verified language metadata is still required for language-specific recommendation sets. This update does not relabel unknown songs, lower relevance thresholds or guarantee 12 fresh picks. Use npm run diagnose after deployment to verify actual provider availability, CPU outcomes and batch progress.
+
+Validation includes storefront order, exact matching, rate-limit fallback, unsafe URL rejection, large-cache public state reads, browser preview behavior and Worker runtime checks in GitHub Actions.

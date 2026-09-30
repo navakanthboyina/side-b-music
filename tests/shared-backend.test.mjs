@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'discovery-diversity-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'preview-cpu-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,18 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'discovery-diversity-1');
- assert.equal(state.pendingSelectionStats.build,'discovery-diversity-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'preview-cpu-1');
+ assert.equal(state.pendingSelectionStats.build,'preview-cpu-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
+});
+
+test('Public state reads omit private discovery caches before JSON reaches Worker JavaScript',async()=>{
+ const s=setup(),row=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ row.catalogCache={large:'x'.repeat(200000)};row.songDiscovery={large:'y'.repeat(200000)};row.referenceLanguageCache={large:'z'.repeat(200000)};
+ s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(row));
+ const original=s.env.DB;let readBytes=0;
+ s.env.DB={prepare(sql){const p=original.prepare(sql);return {bind(...args){const bound=p.bind(...args);return {...bound,async first(){const r=await bound.first();if(r?.data)readBytes=r.data.length;return r;}};}};}};
+ const result=await s.state();assert.equal(result.seedSongCount,16);assert(readBytes<20000);assert(!JSON.stringify(result).includes('yyyyyy'));
+ assert(JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data).songDiscovery.large.length===200000);s.sqlite.close();
 });
