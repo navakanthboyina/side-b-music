@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'song-identity-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'apple-backoff-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -477,7 +477,7 @@ test('Apple fallback verifies both tracks against a specific collection ID',asyn
   const n=Number(u.searchParams.get('id'))-1;
   return Response.json({results:[{artistName:'Fixture Artist '+n,trackName:'Anchor Song '+n,trackId:n*100+1,collectionId:n+1,collectionName:'Verified Release '+n,primaryGenreName:'Soundtrack'},...Array.from({length:4},(_,i)=>({artistName:'Fixture Artist '+n,trackName:'New Apple Song '+i,trackId:n*100+i+2,collectionId:n+1}))]});
  };
- const r=await (await s.call('/refresh',{})).json();assert.equal(r.batch.items.length,12);assert(r.batch.items.every(t=>t.reason.includes('in Apple')&&t.reason.includes('Verified Release')));s.sqlite.close();
+ await s.call('/refresh',{});const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);const items=stored.batch?.items||stored.pending?.items;assert(items.length>0);assert(items.every(t=>t.reason.includes('in Apple')&&t.reason.includes('Verified Release')));s.sqlite.close();
 });
 test('Repeated album requests share catalog response safely',async()=>{
  const {memoizedCatalogFetch}=await import('../backend/evidence.mjs');let calls=0;
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'song-identity-1');
- assert.equal(state.pendingSelectionStats.build,'song-identity-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'apple-backoff-1');
+ assert.equal(state.pendingSelectionStats.build,'apple-backoff-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });

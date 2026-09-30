@@ -18,8 +18,8 @@ test('Upstream 429 pauses Apple across requests, honors Retry-After, and leaves 
 });
 test('Room budget produces a distinct 429 without blaming the upstream provider',async()=>{
  const DB=db();let calls=0;const get=catalogFetcher({DB,CATALOG_FETCH:async()=>{calls++;return Response.json({results:[]});}},()=>100000);
- for(let i=0;i<18;i++)await get('https://itunes.apple.com/search');
- const r=await get('https://itunes.apple.com/search');assert.equal(r.headers.get('x-munna-limit-source'),'room_budget');assert.equal(calls,18);DB.sqlite.close();
+ for(let i=0;i<10;i++)await get('https://itunes.apple.com/search');
+ const r=await get('https://itunes.apple.com/search');assert.equal(r.headers.get('x-munna-limit-source'),'room_budget');assert.equal(calls,10);DB.sqlite.close();
 });
 test('Working Deezer fallback stays cached for six hours despite Apple throttling',async()=>{
  const DB=db(),song={artist:'Singer',title:'Track'};let calls=0;
@@ -40,4 +40,17 @@ test('CPU diagnostic never confuses cpuTime plus preview limitSource with a CPU 
  assert.equal(cpuLimitExceeded({outcome:'ok',cpuTime:219,exceptions:[],logs:[{level:'warn',message:'{"event":"munna-preview","limitSource":"provider_cooldown"}'}]}),false);
  assert.equal(cpuLimitExceeded({outcome:'exceededCpu',cpuTime:10}),true);
  assert.equal(cpuLimitExceeded({outcome:'exception',exceptions:[{message:'Worker exceeded CPU time limit.'}]}),true);
+});
+
+test('Apple budget cannot double-burst over a clock minute boundary',async()=>{
+ const DB=db();let now=59000,calls=0;const get=catalogFetcher({DB,CATALOG_FETCH:async()=>{calls++;return Response.json({results:[]});}},()=>now);
+ for(let i=0;i<10;i++)await get('https://itunes.apple.com/search');
+ now=61000;assert.equal((await get('https://itunes.apple.com/search')).headers.get('x-munna-limit-source'),'room_budget');assert.equal(calls,10);
+ now=119001;assert.equal((await get('https://itunes.apple.com/search')).status,200);assert.equal(calls,11);DB.sqlite.close();
+});
+test('Repeated Apple failures back off longer; a successful probe resets the delay',async()=>{
+ const DB=db();let now=100000,status=429,calls=0;const get=catalogFetcher({DB,CATALOG_FETCH:async()=>{calls++;return new Response('',{status});}},()=>now);
+ await get('https://itunes.apple.com/search');now+=300001;await get('https://itunes.apple.com/search');
+ assert.equal((await get('https://itunes.apple.com/search')).headers.get('retry-after'),'600');assert.equal(calls,2);
+ now+=600001;status=200;await get('https://itunes.apple.com/search');assert.equal(DB.sqlite.prepare("SELECT count FROM limits WHERE key='provider-cooldown:itunes.apple.com'").get(),undefined);DB.sqlite.close();
 });

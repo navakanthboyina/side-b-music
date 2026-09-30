@@ -34,10 +34,13 @@ export function applePreview(track){
 // Counts and provider statuses only: no search terms, taste profile or media URLs in logs.
 export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
  diagnostics.attempts ||= [];
+ const primaryCredit=credits(song.artist).find(c=>c!==song.artist.trim())||song.artist;
+ // Search with one performer; validate the returned full song identity below.
+ const appleTerm=primaryCredit+' '+String(song.title).replace(/\s*\(From\s+["“][^"”]+["”]\)\s*$/i,'');
  for(const country of PREVIEW_COUNTRIES){
   const attempt={provider:'iTunes',country};diagnostics.attempts.push(attempt);
   try{
-   const response=await fetchCatalog('https://itunes.apple.com/search?'+new URLSearchParams({term:song.artist+' '+song.title,entity:'song',media:'music',country,limit:'15'}),{timeoutMs:3500});
+   const response=await fetchCatalog('https://itunes.apple.com/search?'+new URLSearchParams({term:appleTerm,entity:'song',media:'music',country,limit:'15'}),{timeoutMs:3500});
    attempt.status=response.status;
    if(!response.ok){attempt.outcome='http_error';attempt.limitSource=response.headers.get('x-munna-limit-source')||'upstream';attempt.retryAfterSeconds=Number(response.headers.get('retry-after'))||undefined;break;}
    const cc=response.headers.get('cache-control')||'';
@@ -56,7 +59,6 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
  }
  // Multi-performer credits can over-constrain a catalog search. Retry once with
  // one credited performer, while retaining exact title and artist validation.
- const primaryCredit=credits(song.artist).find(c=>c!==song.artist.trim())||song.artist;
  const queries=[...new Set([song.artist+' '+song.title,primaryCredit+' '+song.title])];
  for(let i=0;i<queries.length;i++){
   const attempt={provider:'Deezer',queryMode:i?'primary_credit':'full_credits'};diagnostics.attempts.push(attempt);

@@ -58,3 +58,8 @@ test('Soundtrack attribution is matched conservatively and mismatch reasons are 
  ]}),d);
  assert.equal(p.source,'Deezer');assert.deepEqual(d.attempts.at(-1).rejected,{title:1,artist:1,invalidId:0});
 });
+test('Apple searches one credited performer and core soundtrack title but still validates returned identity',async()=>{
+ const t={artist:'Test Singer, Other Singer',title:'Test Song (From "Film")'};
+ const p=await findPreview(t,async input=>{const u=new URL(input);assert.equal(u.searchParams.get('term'),'Test Singer Test Song');return Response.json({results:[apple]});});
+ assert.equal(p.source,'iTunes');
+});

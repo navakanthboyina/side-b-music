@@ -94,3 +94,9 @@ A catalog `found:true` means a preview URL was returned, not that the browser pl
 Recommendation comparison merges featured-credit placement and explicit soundtrack attribution aliases without changing saved rating keys. Live, remix, translated versions and different performers remain distinct. Compatible drafts are checked again before reuse; returning rated songs keep their familiar-song labels.
 
 Run `npm run diagnose` after deploying and refresh once after logging connects. Build `song-identity-1` reports invalid AI replies as `invalid_response` with a safe `validationReason` (invalid JSON, missing IDs, wrong count, duplicate IDs, outside-pool IDs, or diversity limits). Deterministic ranking still completes eligible batches. This does not remove provider rate limits or guarantee preview availability.
+
+### Apple preview throttling
+
+Build `apple-backoff-1` limits Apple to 10 requests per room window of 60 seconds, shared by search, enrichment and previews. The window starts with the first request instead of resetting at each clock minute. Upstream 429/503 responses pause Apple for at least five minutes, increasing to 10, 20, 40 and 80 minutes after consecutive failed probes; Retry-After can extend this. A successful request resets the failure count. Deezer remains available during the pause, and working preview mappings remain cached for six hours. Apple searches use one credited performer plus the song title, retaining identity checks on results.
+
+This reduces avoidable requests; it cannot force Apple to accept requests. `npm run diagnose` distinguishes `upstream`, `provider_cooldown` and `room_budget`, and shows `retryAfterSeconds`. No country hopping or proxy bypass is used after throttling.
