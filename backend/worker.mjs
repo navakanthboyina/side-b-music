@@ -1,3 +1,4 @@
+import {catalogFetcher} from './catalog-access.mjs';
 import {PRIMARY_MODEL,rankCandidates,selectDiverse,rerankBatch,RECENT_MS,identities,uuid} from './ranking.mjs';
 import {resolveResource,activityState,recordActivity,getResource} from './resources.mjs';
 import {discoverSongs,discoveryEnabled} from './song-discovery.mjs';
@@ -12,7 +13,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'candidate-ranking-1';
+export const RECOMMENDER_BUILD = 'provider-resilience-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -101,15 +102,6 @@ export function aiFailureDiagnostic(response, error, candidateCount, attempt) {
     replyLength: (typeof reply === 'string' ? reply : JSON.stringify(reply) || '').length
   };
 }
-function catalogFetcher(env){
-  return async(url,options)=>{
-    const host=new URL(url).hostname,minute=Math.floor(Date.now()/60000);
-    // Shared budget across previews, searches and refreshes; a provider 429 is not retried in a burst.
-    try{await limited(env.DB,'catalog:'+host+':'+minute,host==='itunes.apple.com'?18:30,Date.now()+120000);}
-    catch(error){if(error.status===429)return new Response('',{status:429,headers:{'retry-after':'60'}});throw error;}
-    return (env.CATALOG_FETCH||fetch)(url,options);
-  };
-}
 export function budgetedCatalogFetch(fetcher,stats,deadline) {
   const hosts=new Set(['itunes.apple.com','api.deezer.com']),failures=new Map();
   const record=(host,category,status)=>{failures.set(host,(failures.get(host)||0)+1);stats.providerFailures={...(stats.providerFailures||{}),[host]:failures.get(host)};const list=stats.catalogErrors||(stats.catalogErrors=[]);if(list.length<12)list.push({host,category,...(status?{status}:{})});};
@@ -164,7 +156,7 @@ async function refresh(env,language='Mixed') {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
@@ -245,7 +237,7 @@ async function refresh(env,language='Mixed') {
       throw Object.assign(fail(422,`No new ${language} picks were approved. ${missing?'AI omitted valid language labels for '+missing+' entries. ':''}${filtered?filtered+' entries were another language or Unknown. ':''}${selectionStats.attempts.some(a=>a.formatError)?'Some AI replies had an invalid format. ':''}The previous batch is unchanged. Try All languages or refresh for other playlist references.`),{selectionStats});
     }
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
-    if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,20000,shortlist);
+    if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,30000,shortlist);
     if(modern&&picks.length===12){
       const enrichment={requests:0,cacheHits:0,errors:0};selectionStats.catalog=enrichment;
       const end=Date.now()+20000,base=budgetedCatalogFetch(catalogFetcher(env),{catalogRequests:0},end);

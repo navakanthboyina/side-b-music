@@ -44,3 +44,21 @@ try{
  assert.deepEqual(await response.json(),{calls:1,errors:[]});
  console.log('PASS: actual Last.fm discovery request runs in Cloudflare workerd.');
 }finally{await discoveryRuntime.dispose();}
+
+// Credential-bearing fallback requests must use workerd-supported manual redirects.
+const {rankingProviders,GROQ_MODEL,GEMINI_MODEL}=await import('./ai-providers.mjs');
+const fallbackScript=`const GROQ_MODEL=${JSON.stringify(GROQ_MODEL)},GEMINI_MODEL=${JSON.stringify(GEMINI_MODEL)};
+${rankingProviders.toString()}
+export default {async fetch(){
+ let calls=0;
+ const providers=rankingProviders({EXTERNAL_AI_FREE_TIER_CONFIRMED:'true',GROQ_API_KEY:'fixture',GEMINI_API_KEY:'fixture',RANKING_FETCH:async(url,options)=>{
+  const request=new Request(url,options);calls++;
+  if(request.redirect!=='manual')throw Error('Unsafe redirect');
+  return Response.json(url.includes('groq.com')?{choices:[{message:{content:'{"ids":[1]}'}}]}:{candidates:[{content:{parts:[{text:'{"ids":[1]}'}]}}]});
+ }},'fixture',[{content:'IDs only'},{content:'Candidates'}]);
+ for(const provider of providers)await provider.run(new AbortController().signal);
+ return Response.json({calls});
+}}`;
+const aiRuntime=new Miniflare(convertV4MiniflareOptions({modules:true,compatibilityDate:'2026-09-23',script:fallbackScript}));
+try{assert.deepEqual(await (await aiRuntime.dispatchFetch('http://localhost')).json(),{calls:2});console.log('PASS: optional AI fallback requests run in workerd with manual redirects.');}
+finally{await aiRuntime.dispose();}

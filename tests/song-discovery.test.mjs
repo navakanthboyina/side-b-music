@@ -178,3 +178,20 @@ test('ListenBrainz adds real secondary matches when Last.fm is unavailable, usin
  assert.equal(rows.length,1);assert.equal(rows[0].evidence.provider,'ListenBrainz');assert.deepEqual(rows[0].evidence.languages,['Telugu','Hindi']);assert.equal(stats.discovery.listenBrainzResults,1);
  assert(!f.calls.some(c=>c.url.includes('audioscrobbler')));
 });
+test('Large unknown-language backlog gets metadata budget before fetching more Last.fm or seed lookups',async()=>{
+ const f=fixture(),stats={};
+ f.state.songDiscovery={queries:{[songKey(anchor)]:{until:999999,tracks:Array.from({length:16},(_,i)=>({artist:'Other Singer',title:'Discovery '+i,id:'t'+i,match:.9,mbid:null}))}},languages:{},backoff:{}};
+ f.env.LISTENBRAINZ_ENABLED='true';
+ f.env.DISCOVERY_FETCH=async url=>{f.calls.push(url);assert.equal(new URL(url).hostname,'musicbrainz.org');return Response.json({recordings:[]});};
+ await discoverSongs(f.state,f.env,{...f.options,stats});
+ assert.equal(stats.discovery.scheduling.mode,'enrich_saved_candidates');assert.equal(stats.discovery.requestsByProvider['Last.fm'],undefined);assert.equal(stats.discovery.requestsByProvider.MusicBrainz,16);
+ assert.equal(stats.discovery.unknownLanguage,16);
+});
+test('Last.fm cap applies to entire multi-pool refresh, preserving enrichment capacity',async()=>{
+ const f=fixture(),stats={};f.options.language='Mixed';f.env.DISCOVERY_FETCH=async()=>Response.json({similartracks:{track:[]}});
+ for(let round=0;round<3;round++){
+  const anchors=Array.from({length:6},(_,i)=>({...anchor,id:i+1,title:'Seed '+round+' '+i}));f.state.seedSongs.push(...anchors);
+  await discoverSongs(f.state,f.env,{...f.options,anchors,stats});
+ }
+ assert.equal(stats.discovery.requestsByProvider['Last.fm'],6);assert.equal(stats.discovery.requests,6);
+});

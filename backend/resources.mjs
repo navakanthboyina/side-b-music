@@ -22,7 +22,7 @@ export async function resolveResource(db,song,fetchCatalog,stats={},fetchArtwork
  resource.youtube=!resource.preview?'https://www.youtube.com/results?search_query='+encodeURIComponent(song.artist+' '+song.title+' official'):null;
  const failed=stats.attempts?.some(a=>['http_error','timeout','request_failed','invalid_response'].includes(a.outcome));
  // Cache URLs/metadata, never audio. Retry outages soon; successful mappings last 6 hours.
- const ttl=failed?60000:resource.preview?6*3600000:15*60000;
+ const ttl=resource.preview?6*3600000:failed?60000:15*60000;
  if(!stats.noStore)await q(db,'INSERT INTO song_resources(key,data,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data,expires=excluded.expires',songKey(song),JSON.stringify(resource),Date.now()+Math.min(ttl,stats.maxAgeMs??ttl)).run();
  return resource;
 }

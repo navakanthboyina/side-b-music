@@ -18,7 +18,7 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
   try{
    const response=await fetchCatalog('https://itunes.apple.com/search?'+new URLSearchParams({term:song.artist+' '+song.title,entity:'song',media:'music',country,limit:'15'}),{timeoutMs:3500});
    attempt.status=response.status;
-   if(!response.ok){attempt.outcome='http_error';break;}
+   if(!response.ok){attempt.outcome='http_error';attempt.limitSource=response.headers.get('x-munna-limit-source')||'upstream';attempt.retryAfterSeconds=Number(response.headers.get('retry-after'))||undefined;break;}
    const cc=response.headers.get('cache-control')||'';
    if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;
    const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);

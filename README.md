@@ -2,7 +2,7 @@
 
 [Open the shared dashboard](https://navakanthboyina.github.io/side-b-music/)
 
-One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **candidate-ranking-1**.
+One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **provider-resilience-1**.
 
 ## Current recommendation flow
 
@@ -11,7 +11,7 @@ One listening room, no sign-in: everyone sees the same saved mix and can rate in
 3. Merge and normalize real candidates. MusicBrainz IDs resolve known recording aliases; mastering suffixes are deduplicated conservatively. Live, remix, acoustic and translated versions are not blindly merged. Missing identities remain text-matched; canonical resolution is best-effort, not universal.
 4. Exclude seeded/rated songs and recommendations from the previous **two days**. Unrated songs may return after that window. Language-specific selections require supported lyrics-language metadata; unknown language is permitted only in Mixed. Artist nationality and storefront country are never language proof.
 5. Deterministic scoring uses provider similarity, reference-song likes, weak preview feedback, novelty and exposure. Diversity limits keep at most two songs per artist, reference and known release. Language balancing prefers variety among eligible songs; it cannot guarantee equal representation.
-6. When a complete 12-song selection exists, send a verified shortlist of at most 24 candidates to `@cf/google/gemma-4-26b-a4b-it`. One bounded call returns 12 unique candidate IDs. Metadata, language, blocking, identity and diversity remain server-controlled. Invalid IDs, a timeout, unavailable AI or quota exhaustion retain the deterministic selection. AI never invents songs or supplies their descriptions.
+6. When a complete 12-song selection exists, send a verified shortlist of at most 24 candidates to `@cf/google/gemma-4-26b-a4b-it`. The bounded provider chain returns 12 unique candidate IDs. Metadata, language, blocking, identity and diversity remain server-controlled. Invalid IDs, a timeout, unavailable AI or quota exhaustion retain the deterministic selection. AI never invents songs or supplies their descriptions.
 7. Resolve selected songs against Apple/iTunes India, then US. Deezer remains an optional preview fallback to preserve working playback. Show YouTube search only when no usable preview is returned. A search result's provider ID is verified before the same Apple-first chain runs.
 8. Cache provider mappings, metadata and preview URLs in D1, never audio. Use Cover Art Archive for a known MusicBrainz release when Apple artwork is absent. Catalog and artwork failures do not veto a valid batch.
 9. Save one shared batch: **six songs per day for two days**. If fewer than 12 qualify, preserve the visible batch and retain the approved draft. Do not fill gaps with unrelated or unverified songs.
@@ -35,9 +35,9 @@ npm run deploy
 npm run diagnose
 ```
 
-Migration `0002_resources_activity.sql` adds cache/activity tables. **Do not recreate the database or re-import the 533 songs.** Existing playlists, ratings, visible batch and compatible unexpired draft remain. Keep your existing D1 database ID in `backend/wrangler.jsonc` and your existing Cloudflare secrets. No new paid service or API key is required.
+Migration `0002_resources_activity.sql` adds cache/activity tables. **Do not recreate the database or re-import the 533 songs.** Existing playlists, ratings, visible batch and compatible unexpired draft remain. Keep your existing D1 database ID in `backend/wrangler.jsonc` and your existing Cloudflare secrets. No new paid service or API key is required for the fixes. Optional AI fallback providers require their own keys.
 
-Reload the website after deployment. The build in diagnostics must be `candidate-ranking-1`. The public backend URL remains in `shared-config.js`.
+Reload the website after deployment. The build in diagnostics must be `provider-resilience-1`. The public backend URL remains in `shared-config.js`.
 
 For a new installation, see [backend setup](backend/README.md).
 
@@ -47,7 +47,7 @@ For a new installation, see [backend setup](backend/README.md).
 npm run diagnose
 ```
 
-After logging connects, click Refresh **once** and try one preview. Let the three-minute capture finish. Share its **after** snapshot and `munna-preview` events; the **before** snapshot describes the prior attempt.
+Wait for “Live Worker events confirmed”, then click Refresh **once** and try one preview. Let the three-minute capture finish. Share its **after** snapshot and `munna-preview` events; the **before** snapshot describes the prior attempt.
 
 - `discovery.eligibility`: unknown/other languages, rated/excluded songs, duplicates and capped references.
 - `discovery.requestsByProvider`: where the shared discovery budget went.
@@ -62,7 +62,7 @@ Reports are saved under `backend/.diagnostics/` (gitignored). Raw provider keys 
 
 Keep the Cloudflare account on Workers Free for hard allowance limits rather than paid overages. Workers AI has a free daily allocation; this does **not** mean unlimited AI, requests or D1 capacity. Deterministic fallback covers AI failures, not an exhausted Worker/D1 allowance.
 
-Refresh retains the 60-second cooldown, generation lease and 30-attempt UTC daily limit. Discovery uses at most 24 requests per refresh, MusicBrainz spacing, bounded caches and provider backoff. Catalog enrichment has a separate 12-request/20-second budget. Apple calls across preview/search/refresh share an 18-per-minute room budget. Preview URLs and metadata are cached for up to six hours, misses briefly, with Cache-Control restrictions respected. Media is streamed directly from providers and never downloaded to D1.
+Refresh retains the 60-second cooldown, generation lease and 30-attempt UTC daily limit. Discovery uses at most 24 requests per refresh, MusicBrainz spacing, bounded caches and provider backoff. Last.fm is capped at six requests across all pools. For language-filtered discovery, a backlog of at least 12 unchecked cached tracks gets metadata priority before new similar-track queries. Catalog enrichment has a separate 12-request/20-second budget. Apple calls across preview/search/refresh share an 18-per-minute room budget. Upstream 429/503 responses pause that provider across all browsers for at least five minutes (longer if Retry-After requires it). Diagnostics distinguish upstream failures, shared-room limits and cooldown skips. Other preview providers remain available; a successful fallback preview stays cached even if Apple failed. Preview URLs and metadata are cached for up to six hours, misses briefly, with Cache-Control restrictions respected. Media is streamed directly from providers and never downloaded to D1.
 
 ListenBrainz algorithm names and provider coverage can change. `LISTENBRAINZ_ALGORITHM` can override the documented dataset algorithm; `LISTENBRAINZ_ENABLED=false` disables that secondary source. Outages or missing language metadata can still leave a draft incomplete. Unknown language is never guessed to force 12 results.
 
@@ -89,3 +89,7 @@ Tests cover AI quota/timeout/invalid-ID fallback, canonical deduplication, ratin
 - [Apple Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/Searching.html)
 
 Last.fm attribution is displayed for its discoveries. Apple previews retain the iTunes attribution and linked Download on iTunes badge. Provider artwork remains subject to its owners' rights. No unofficial Shazam, Spotify or JioSaavn API is required.
+
+### Optional ranking providers
+
+Groq GPT-OSS 120B and Gemini Flash-Lite can follow Gemma before deterministic fallback. They are disabled until the owner configures free-tier credentials and confirms account settings. See [activation and data-use details](backend/README.md#optional-ai-fallback-chain). Extra AI services do not resolve missing language metadata or catalog rate limits.

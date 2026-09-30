@@ -24,7 +24,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
   try{
    const {preview,diagnostics}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
    const attempts=diagnostics?.attempts||[];const appleAttempt=attempts.find(a=>a.provider==='iTunes'&&a.outcome!=='found');
-   if(!preview){fallback.hidden=false;status.textContent='No matching preview available. Find the song on YouTube.';if(appleAttempt)attribution.textContent='Apple: '+appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':'');return;}
+   if(!preview){fallback.hidden=false;status.textContent='No matching preview available. Find the song on YouTube.';if(appleAttempt)attribution.textContent='Apple: '+(appleAttempt.limitSource==='room_budget'?'shared lookup limit reached':appleAttempt.limitSource==='provider_cooldown'?'temporarily paused after provider error':appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':''));return;}
    const u=new URL(preview.url),link=new URL(preview.link);
    const clean=x=>x.protocol==='https:'&&!x.username&&!x.password&&!x.port;
    const apple=/^(?:[a-z0-9-]+\.)*(?:itunes\.apple\.com|mzstatic\.com)$/.test(u.hostname)&&['music.apple.com','itunes.apple.com'].includes(link.hostname);
@@ -34,7 +34,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
    if(apple){
     attribution.textContent='Preview provided courtesy of iTunes';
     const badge=doc.createElement('img');badge.src='https://tools.applemediaservices.com/api/badges/download-on-itunes/badge/en-us?size=250x83';badge.alt='Download on iTunes';badge.width=120;badge.height=40;source.append(badge);
-   }else {source.textContent='Listen on Deezer ↗';if(appleAttempt)attribution.textContent='Apple: '+appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':'')+' · using Deezer';}
+   }else {source.textContent='Listen on Deezer ↗';if(appleAttempt)attribution.textContent='Apple: '+(appleAttempt.limitSource==='room_budget'?'shared lookup limit reached':appleAttempt.limitSource==='provider_cooldown'?'temporarily paused after provider error':appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':''))+' · using Deezer';}
    audio.src=u.href;status.textContent='Ready · press play for a 30-second preview';
    try{await audio.play();}catch{if(mine===ticket)status.textContent='Ready · press play to start the preview';}
   }catch{if(mine===ticket)status.textContent='Preview unavailable. Please try again.';}

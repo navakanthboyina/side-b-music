@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'candidate-ranking-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'provider-resilience-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -330,7 +330,7 @@ test('Search falls back to Deezer, omits malformed tracks, and distinguishes out
  const s=setup();s.env.CATALOG_FETCH=async url=>new URL(url).hostname==='itunes.apple.com'?new Response('',{status:503}):Response.json({data:[{id:5,artist:{name:'Fallback Artist'},title:'Fallback Song'},{id:6,title:'Invalid'}]});
  const result=await (await s.call('/search',{query:'Fallback'})).json();assert.equal(result.songs.length,1);assert.equal(result.songs[0].provider,'deezer');
  s.env.CATALOG_FETCH=async()=>new Response('',{status:503});assert.equal((await s.call('/search',{query:'Song'})).status,503);
- s.env.CATALOG_FETCH=async()=>Response.json({results:[],data:[]});assert.deepEqual((await (await s.call('/search',{query:'Nothing'})).json()).songs,[]);s.sqlite.close();
+ s.env.CATALOG_FETCH=async()=>Response.json({results:[],data:[]});assert.equal((await s.call('/search',{query:'Still paused'})).status,503);s.sqlite.exec("UPDATE limits SET expires=0 WHERE key LIKE 'provider-cooldown:%'");assert.deepEqual((await (await s.call('/search',{query:'Nothing'})).json()).songs,[]);s.sqlite.close();
 });
 
 test('Four-candidate schema cannot request fabricated IDs or 24 picks',()=>{
@@ -665,7 +665,7 @@ test('Saved discovery publishes 12 picks, bounded catalog enrichment and valid d
 });
 test('New discovery preserves seven compatible draft songs and adds five',async()=>{
  const s=setup(),state=savedDiscoveryFixture(s);
- state.pending={language:'Telugu',at:Date.now(),selectionStats:{build:'catalog-recovery-1'},items:Array.from({length:7},(_,i)=>({artist:'Approved Singer '+i,title:'Approved Song '+i,language:'Telugu',reason:'Previously approved',aiSong:true}))};
+ state.pending={language:'Telugu',at:Date.now(),selectionStats:{build:'candidate-ranking-1'},items:Array.from({length:7},(_,i)=>({artist:'Approved Singer '+i,title:'Approved Song '+i,language:'Telugu',reason:'Previously approved',aiSong:true}))};
  s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
  const r=await (await s.call('/refresh',{language:'Telugu'})).json();
  assert.equal(r.batch?.items.length,12);assert.equal(r.batch.selectionStats.resumedCount,7);assert.equal(r.batch.items.filter(t=>t.title.startsWith('Approved')).length,7);s.sqlite.close();
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'candidate-ranking-1');
- assert.equal(state.pendingSelectionStats.build,'candidate-ranking-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'provider-resilience-1');
+ assert.equal(state.pendingSelectionStats.build,'provider-resilience-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });

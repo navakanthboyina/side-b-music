@@ -1,3 +1,4 @@
+import {tailParser} from './tail-parser.mjs';
 import {spawn} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
@@ -7,21 +8,12 @@ const cwd=path.dirname(fileURLToPath(import.meta.url));
 const endpoint='https://munnas-grooves-shared.munna-grooves.workers.dev';
 const report={startedAt:new Date().toISOString(),snapshots:[],events:[],tailMessages:[]};
 const redact=s=>String(s).replace(/(Bearer\s+)[^\s"']+/gi,'$1[redacted]').replace(/((?:api_key|token|secret|authorization)["']?\s*[:=]\s*["']?)[^&\s"',}]+/gi,'$1[redacted]').slice(0,4000);
-const tail=spawn(process.execPath,[path.join(cwd,'node_modules/wrangler/bin/wrangler.js'),'tail','munnas-grooves-shared','--format','json'],{cwd,stdio:['ignore','pipe','pipe']});
-let finished=false,timer,buffer='',depth=0,inString=false,escaped=false;
-function consume(chunk){
- for(const ch of chunk){
-  if(!depth){if(ch!=='{')continue;buffer='{';depth=1;inString=false;escaped=false;continue;}
-  buffer+=ch;
-  if(inString){if(escaped)escaped=false;else if(ch==='\\')escaped=true;else if(ch==='"')inString=false;}
-  else if(ch==='"')inString=true;
-  else if(ch==='{')depth++;
-  else if(ch==='}')depth--;
-  if(buffer.length>1000000){buffer='';depth=0;continue;}
-  if(!depth){try{record(JSON.parse(buffer));}catch{}buffer='';}
- }
-}
+const tail=spawn(process.execPath,[path.join(cwd,'node_modules/wrangler/bin/wrangler.js'),'tail','munnas-grooves-shared','--format','json'],{cwd,stdio:['ignore','pipe','pipe'],env:{...process.env,WRANGLER_LOG:'info'}});
+let finished=false,timer,probeTimer,connected=false;
+function tailMessage(value){const message=redact(value);report.tailMessages.push(message);report.tailMessages=report.tailMessages.slice(-20);console.error(message);}
+const consume=tailParser(record,tailMessage);
 function record(event){
+ if(!connected){connected=true;clearInterval(probeTimer);console.log('Live Worker events confirmed. If no generation is active, click Refresh ONCE, then try a preview.');}
  let requestPath;try{requestPath=new URL(event.event?.request?.url).pathname;}catch{}
  const entry={
   at:event.eventTimestamp?new Date(event.eventTimestamp).toISOString():new Date().toISOString(),
@@ -55,7 +47,7 @@ async function snapshot(label){
  report.snapshots.push(item);console.log(JSON.stringify(item,null,2));
 }
 async function finish(){
- if(finished)return;finished=true;clearTimeout(timer);
+ if(finished)return;finished=true;clearTimeout(timer);clearInterval(probeTimer);
  tail.kill('SIGTERM');
  const force=setTimeout(()=>tail.kill('SIGKILL'),2000);force.unref();
  await snapshot('after');
@@ -66,6 +58,10 @@ async function finish(){
  if(report.events.some(e=>/canceled|cancelled/i.test(e.outcome||'')))findings.push('A request was canceled; the trace alone does not identify why.');
  if(!report.events.length)findings.push('No Worker events captured. Check the Wrangler login/connection; absence of events is not proof of success.');
  const latest=report.snapshots.at(-1)?.diagnostics;
+ if(latest?.discovery?.scheduling)findings.push('Discovery scheduling: '+JSON.stringify(latest.discovery.scheduling));
+ if(latest?.discovery?.stopReason)findings.push('Discovery stopped: '+latest.discovery.stopReason);
+ if(latest?.ai?.attempts)findings.push('AI provider attempts: '+JSON.stringify(latest.ai.attempts));
+ if(latest&&!latest.ai)findings.push('AI has not been called for this draft; discovery must first fill 12 eligible songs.');
  if(latest?.ai?.mode==='deterministic'&&latest.ai.fallbackReason)findings.push('AI fallback: '+latest.ai.fallbackReason+'. Deterministic taste ranking was retained.');
  if(latest?.discovery?.eligibility)findings.push('Discovery filters: '+JSON.stringify(latest.discovery.eligibility));
  report.findings=findings;
@@ -79,4 +75,14 @@ process.on('SIGINT',()=>void finish());
 process.on('SIGTERM',()=>void finish());
 console.log('Watching this Worker for 3 minutes. The BEFORE snapshot is the previous attempt; wait for the AFTER snapshot before sharing the report. Once logging connects and no generation is active, click Refresh ONCE in the dashboard. Also click a song preview to capture iTunes/Deezer outcomes. Do not also run a curl refresh. Ctrl+C saves early. This command does not trigger a refresh.');
 await snapshot('before');
-if(!finished)timer=setTimeout(()=>void finish(),180000);
+if(!finished){
+ timer=setTimeout(()=>void finish(),180000);
+ // JSON-format Wrangler has no connected banner. A read-only state probe confirms
+ // delivery of real events instead of treating a silent process as connected.
+ probeTimer=setInterval(async()=>{
+  if(finished||connected)return;
+  try{await fetch(endpoint+'/state?diagnose='+Date.now(),{signal:AbortSignal.timeout(10000)}).then(r=>r.body?.cancel());}catch{}
+  if(!connected&&!finished)console.log('Waiting for a live Worker event. Keep this command open; no refresh has been triggered.');
+ },15000);
+}
+

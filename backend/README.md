@@ -43,8 +43,28 @@ CSV columns: `Artist Name(s),Track Name` or `Artist,Title`; maximum 2 MB each. I
 
 ## Diagnostics
 
-`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `candidate-ranking-1`.
+`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `provider-resilience-1`.
 
 `/admin/ai-check` is an owner-only, explicitly invoked model probe, not part of page loads. It can consume AI allowance. Normal loads, previews and ratings do not call AI. Actual preview activity is stored as small aggregates, separate from explicit ratings.
 
 Keep the Worker on Free if you need hard free-tier limits. Provider coverage and free allowances can still cause incomplete drafts; deterministic ranking removes AI as a required dependency but cannot invent missing source or language evidence.
+
+## Optional AI fallback chain
+
+The order is Workers AI Gemma → Groq `openai/gpt-oss-120b` → Gemini `gemini-3.1-flash-lite` → deterministic ranking. Unconfigured providers are skipped. The entire chain has a 30-second deadline, each provider is tried once, and every result must contain valid unique candidate IDs and satisfy the same diversity constraints. There are no tools, web searches, invented tracks or automatic paid upgrades. Failure still publishes a complete deterministic batch when discovery has supplied 12 eligible songs. AI cannot fill a missing-language or missing-discovery pool.
+
+To enable optional providers, use **free-tier accounts with billing disabled**. The backend cannot inspect your account's billing plan. Gemini's free service may use submitted candidate/feedback text to improve Google products; review its terms before enabling it. Only the bounded shortlist and feedback sample are sent, never API secrets or your whole library. Skip either key to omit that provider.
+
+From `backend`:
+
+```bash
+npx wrangler secret put GROQ_API_KEY
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put EXTERNAL_AI_FREE_TIER_CONFIRMED
+```
+
+Enter `true` for the last secret only after confirming those account settings and accepting the data use. Keys alone never enable external AI. Do not paste keys into chat, commit them, or put them in frontend files. Existing Cloudflare-only behavior works without any new secrets.
+
+After deployment, `npm run diagnose` reports `ai.attempts` with provider, model, selected/failure outcome and HTTP status when available. `discovery.scheduling` shows backlog priority; `metadata_provider_cooldown` identifies MusicBrainz backoff. Apple preview attempts expose `limitSource` (`upstream`, `room_budget`, `provider_cooldown`) and retry delay. JSON tail mode has no Wrangler connection banner, so the diagnostic now uses read-only probes to confirm event delivery and preserves startup messages from stdout as well as stderr. Missing events are still reported honestly rather than interpreted as success.
+
+References: [Groq models](https://console.groq.com/docs/models), [Groq free limits](https://console.groq.com/docs/rate-limits), [Gemini pricing and free-tier data use](https://ai.google.dev/gemini-api/docs/pricing).

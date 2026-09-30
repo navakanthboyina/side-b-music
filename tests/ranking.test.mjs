@@ -43,3 +43,34 @@ test('Diversity caps reference and artist concentration',()=>{
  const rows=Array.from({length:12},(_,i)=>({...track(i),score:90,language:'Telugu'}));
  assert.equal(selectDiverse(rows).length,2);
 });
+test('Optional chain rejects invented Groq IDs, accepts Gemini IDs and keeps secrets out of diagnostics',async()=>{
+ const picks=[track(1),track(2)],stats={},calls=[];
+ const env={AI:{run:async()=>{throw Error('quota');}},EXTERNAL_AI_FREE_TIER_CONFIRMED:'true',GROQ_API_KEY:'groq-secret',GEMINI_API_KEY:'gemini-secret',RANKING_FETCH:async(url,options)=>{
+  calls.push(url);const body=JSON.parse(options.body);assert.equal(options.redirect,'manual');assert(!options.body.includes('secret'));
+  if(url.includes('groq.com')){assert.equal(options.headers.Authorization,'Bearer groq-secret');assert.equal(body.model,'openai/gpt-oss-120b');return Response.json({choices:[{message:{content:'{"ids":[1,99]}'}}]});}
+  assert.equal(options.headers['x-goog-api-key'],'gemini-secret');return Response.json({candidates:[{content:{parts:[{text:'{"ids":[2,1]}'}]}}]});
+ }};
+ const out=await rerankBatch(picks,env,stats);assert.equal(out[0].title,'Song 2');assert.equal(stats.ai.provider,'Gemini');assert.match(out[0].reason,/Gemini/);
+ assert.deepEqual(stats.ai.attempts.map(a=>a.outcome),['quota','invalid_response','selected']);assert.equal(calls.length,2);assert(!JSON.stringify(stats).includes('secret'));
+});
+test('Unconfirmed external accounts are never called; all configured failures still return deterministic songs',async()=>{
+ const picks=[track(1),track(2)];let calls=0;
+ const env={GROQ_API_KEY:'key',GEMINI_API_KEY:'key',AI:{run:async()=>{throw Error('quota');}},RANKING_FETCH:async()=>{calls++;return new Response('',{status:429});}};
+ await rerankBatch(picks,env,{});assert.equal(calls,0);
+ const stats={};const out=await rerankBatch(picks,{...env,EXTERNAL_AI_FREE_TIER_CONFIRMED:'true'},stats);
+ assert.equal(calls,2);assert.deepEqual(out.map(t=>t.title),picks.map(t=>t.title));assert.equal(stats.ai.mode,'deterministic');assert.equal(stats.ai.attempts.length,3);
+});
+test('Groq success ends fallback immediately without calling Gemini',async()=>{
+ const stats={},picks=[track(1),track(2)];let calls=0;
+ const out=await rerankBatch(picks,{EXTERNAL_AI_FREE_TIER_CONFIRMED:'true',GROQ_API_KEY:'key',GEMINI_API_KEY:'key',RANKING_FETCH:async url=>{
+  calls++;assert(url.includes('groq.com'));return Response.json({choices:[{message:{content:'{"ids":[2,1]}'}}]});
+ }},stats);
+ assert.equal(calls,1);assert.equal(out[0].title,'Song 2');assert.equal(stats.ai.provider,'Groq');
+});
+test('External redirects are rejected without forwarding provider credentials',async()=>{
+ let calls=0;const stats={};
+ const out=await rerankBatch([track(1),track(2)],{EXTERNAL_AI_FREE_TIER_CONFIRMED:'true',GROQ_API_KEY:'secret',RANKING_FETCH:async(url,options)=>{
+  calls++;assert.equal(options.redirect,'manual');return new Response(null,{status:302,headers:{location:'https://wrong.example/'}});
+ }},stats);
+ assert.equal(calls,1);assert.equal(stats.ai.mode,'deterministic');assert.equal(out.length,2);
+});
