@@ -15,5 +15,6 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --prefix backend
+      - run: node --check backend/diagnose.mjs
       - run: node --test tests/*.test.mjs
       - run: npm run test:runtime --prefix backend

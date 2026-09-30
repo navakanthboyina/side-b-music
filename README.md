@@ -209,3 +209,11 @@ Each ranking pool includes at most four candidates per reference. References tha
 Mixed discovery can rank candidates with unknown language without calling MusicBrainz on every refresh. Language-specific requests still require supported language metadata. The daily warm job continues enriching language data. Candidate/language cache bounds still apply to early returns.
 
 Every attempted refresh with selection diagnostics now persists them, including zero-result failures. GET /state returns lastSelectionStats; pendingSelectionStats is retained as a compatibility alias for the latest diagnostics. Expired draft diagnostics are no longer presented as current. Drafts still expire after 24 hours without progress, so pendingSongCount can be zero even when an older log showed a partial draft.
+
+### One-command incident capture
+
+From backend, run `npm run diagnose`. It watches Wrangler logs for three minutes and reads /state before and after. Once logging connects and the room is idle, click Refresh once in the dashboard. Do not also issue curl refreshes. Ctrl+C finishes early and saves the report.
+
+Reports are written to backend/.diagnostics/ (gitignored, local only). They include build, latest selection diagnostics, cooldown, pending count, request outcome and warning/error events. Request headers/bodies and full song profiles are not included. The tool flags CPU-limit errors, canceled requests and invalid AI JSON; it does not change taste, deploy, refresh, or claim to profile CPU hotspots. It requires npm dependencies and an existing Wrangler login. No report is uploaded automatically.
+
+Cloudflare termination may prevent application cleanup and diagnostics from being written. Live tail outcomes remain necessary even when /state reports an older attempt. A test suite passing does not prove an invocation fits the free-plan production CPU limit.

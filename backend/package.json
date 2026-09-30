@@ -8,7 +8,8 @@
     "db:migrate": "wrangler d1 migrations apply DB --remote",
     "deploy": "wrangler deploy",
     "check": "wrangler deploy --dry-run --outdir dist",
-    "test:runtime": "node test-runtime.mjs"
+    "test:runtime": "node test-runtime.mjs",
+    "diagnose": "node diagnose.mjs"
   },
   "devDependencies": {
     "wrangler": "4.137.0"

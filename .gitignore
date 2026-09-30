@@ -5,3 +5,5 @@ backend/.wrangler/
 .env*
 *admin-token*
 playlist-seed.json
+
+backend/.diagnostics/
