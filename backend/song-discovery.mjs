@@ -30,6 +30,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
    cache.mbNext=now()+1100;
   }
   d.requests++;
+  d.requestsByProvider ||= {};d.requestsByProvider[provider]=(d.requestsByProvider[provider]||0)+1;
   try{
    const r=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(8000),headers:{Accept:'application/json',...(provider==='MusicBrainz'?{'User-Agent':'MunnasGrooves/2.0 (https://github.com/navakanthboyina/side-b-music)'}:{})}});
    // Workers supports manual/follow only. Never follow a credential-bearing URL.
@@ -77,18 +78,24 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  for(const t of existing){if(t.evidence?.reference){const k=keyOf(t.evidence.reference);referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}}
  const cappedReferences=new Set([...referenceCounts].filter(([,n])=>n>=2).map(([k])=>k));
  const available=()=>{
+  const audit={expiredReference:0,inactiveReference:0,cappedReference:0,ratedOrExcluded:0,duplicate:0,unknownLanguage:0,otherLanguage:0,eligibleBeforePoolLimit:0,languages:{}};
   const rows=[],seen=new Set();
   for(const [key,q] of Object.entries(queries())){
-   if(q.until<=now()||!active.has(key)||cappedReferences.has(key))continue;
+   if(q.until<=now()){audit.expiredReference+=q.tracks.length;continue;}
+   if(!active.has(key)){audit.inactiveReference+=q.tracks.length;continue;}
+   if(cappedReferences.has(key)){audit.cappedReference+=q.tracks.length;continue;}
    for(const t of q.tracks){
-    if(denied(t)||seen.has(keyOf(t)))continue;
+    if(denied(t)){audit.ratedOrExcluded++;continue;}
+    if(seen.has(keyOf(t))){audit.duplicate++;continue;}
     const info=cache.languages[keyOf(t)],labels=info?.until>now()?info.labels:[];
-    if(language!=='Mixed'&&!labels.some(l=>selectedLanguages(language).includes(l)))continue;
+    for(const l of labels.length?labels:['Unknown'])audit.languages[l]=(audit.languages[l]||0)+1;
+    if(language!=='Mixed'&&!labels.some(l=>selectedLanguages(language).includes(l))){audit[labels.length?'otherLanguage':'unknownLanguage']++;continue;}
     let a=anchors.find(a=>keyOf(a)===key);
     if(!a){const ref=active.get(key);a={id:Math.max(0,...anchors.map(x=>x.id))+1,artist:ref.artist,title:ref.title,source:state.songRatings?.[key]?.value==='replay'?'liked song':'playlist song'};anchors.push(a);}
     seen.add(keyOf(t));rows.push({...t,anchorIds:[a.id],evidence:{type:'similar_track',provider:'Last.fm',candidateId:t.id,reference:{artist:a.artist,title:a.title},match:t.match,url:t.url,languages:labels,recordingId:info?.recordingId}});
    }
   }
+  audit.eligibleBeforePoolLimit=rows.length;d.eligibility=audit;
   // Interleave starting songs so a large response from one reference cannot monopolize the pool.
   const buckets=new Map();for(const t of rows.sort((a,b)=>b.match-a.match)){const k=t.anchorIds[0];if(!buckets.has(k))buckets.set(k,[]);if(buckets.get(k).length<4)buckets.get(k).push(t);}
   const out=[];while(out.length<24&&[...buckets.values()].some(a=>a.length))for(const list of buckets.values()){if(list.length&&out.length<24)out.push(list.shift());}return out;
@@ -110,7 +117,13 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  // Mixed ranking does not require language labels. Enrich separately during daily warming.
  if(language==='Mixed'&&!enrichLanguage){rows=available();d.eligible=rows.length;trimCache();return rows;}
  // Resolve recordings, then their performed works. Release text-language is never a song label.
- const candidates=Object.values(queries()).filter(q=>q.until>now()).flatMap(q=>q.tracks).filter(t=>!denied(t));
+ // Only enrich tracks that could enter this batch, fairly across taste references.
+ // Previously this scanned capped/inactive references and exhausted the metadata budget.
+ const queues=Object.entries(queries()).filter(([key,q])=>q.until>now()&&active.has(key)&&!cappedReferences.has(key))
+  .map(([,q])=>q.tracks.filter(t=>!denied(t)&&!(cache.languages[keyOf(t)]?.until>now())));
+ const candidates=[];
+ for(let i=0;queues.some(q=>i<q.length);i++)for(const q of queues)if(q[i])candidates.push(q[i]);
+ d.enrichmentQueued=candidates.length;
  const visited=new Set();
  for(const t of candidates){
   const key=keyOf(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
@@ -143,5 +156,5 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  }
  trimCache();
  d.errors=d.errors.slice(-12);
- rows=available();d.eligible=rows.length;return rows;
+ rows=available();d.eligible=rows.length;d.stopReason=d.requests>=24?'request_budget':now()+9000>deadline?'deadline':'available_metadata_checked';return rows;
 }

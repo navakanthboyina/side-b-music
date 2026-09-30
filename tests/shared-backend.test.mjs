@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'preview-cpu-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'discovery-audit-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'preview-cpu-1');
- assert.equal(state.pendingSelectionStats.build,'preview-cpu-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'discovery-audit-1');
+ assert.equal(state.pendingSelectionStats.build,'discovery-audit-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -702,4 +702,13 @@ test('Public state reads omit private discovery caches before JSON reaches Worke
  s.env.DB={prepare(sql){const p=original.prepare(sql);return {bind(...args){const bound=p.bind(...args);return {...bound,async first(){const r=await bound.first();if(r?.data)readBytes=r.data.length;return r;}};}};}};
  const result=await s.state();assert.equal(result.seedSongCount,16);assert(readBytes<20000);assert(!JSON.stringify(result).includes('yyyyyy'));
  assert(JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data).songDiscovery.large.length===200000);s.sqlite.close();
+});
+test('Deezer search result without audio falls through to a matched Apple preview',async()=>{
+ const s=setup();s.env.CATALOG_FETCH=async input=>{
+  const u=new URL(input);
+  if(u.hostname==='api.deezer.com')return Response.json({id:42,artist:{name:'Found Artist'},title:'Found Song',preview:''});
+  return Response.json({results:[{trackId:99,artistName:'Found Artist',trackName:'Found Song',previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=99'}]});
+ };
+ const result=await (await s.call('/preview',{provider:'deezer',id:42})).json();
+ assert.equal(result.preview.source,'iTunes');assert.equal(result.diagnostics.attempts.length,2);s.sqlite.close();
 });

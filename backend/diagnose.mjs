@@ -74,6 +74,6 @@ async function finish(){
 }
 process.on('SIGINT',()=>void finish());
 process.on('SIGTERM',()=>void finish());
-console.log('Watching this Worker for 3 minutes. Once logging connects and no generation is active, click Refresh ONCE in the dashboard. Do not also run a curl refresh. Ctrl+C saves early. This command does not trigger a refresh.');
+console.log('Watching this Worker for 3 minutes. Once logging connects and no generation is active, click Refresh ONCE in the dashboard. Also click a song preview to capture iTunes/Deezer outcomes. Do not also run a curl refresh. Ctrl+C saves early. This command does not trigger a refresh.');
 await snapshot('before');
 if(!finished)timer=setTimeout(()=>void finish(),180000);

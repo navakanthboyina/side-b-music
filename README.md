@@ -231,3 +231,9 @@ MusicBrainz 503 responses remain external outages. Verified language metadata is
 Validation includes storefront order, exact matching, rate-limit fallback, unsafe URL rejection, large-cache public state reads, browser preview behavior and Worker runtime checks in GitHub Actions.
 
 Refresh source rotation now updates its single JSON field atomically in D1 instead of reading and serializing the entire room in Worker JavaScript. Modern discovery and daily warming omit obsolete legacy catalog/language caches when reading state. These are additional CPU reductions, not a change to song ratings or language eligibility.
+
+### Discovery and preview diagnostics (discovery-audit-1)
+
+Run `npm run diagnose` from `backend`, click Refresh once after logging connects, and click one preview during the recording. The saved report includes `munna-preview` events with provider, storefront, HTTP status, matching-row counts and outcome; no song queries or media URLs are logged. A Deezer result does not prove Apple is unavailable everywhere: check the Apple attempt outcome. Search-result previews use their verified provider ID first; dashboard songs try iTunes India, iTunes US, then Deezer. YouTube appears in the player only after lookup returns no preview.
+
+Discovery diagnostics now include `requestsByProvider`, `eligibility`, `enrichmentQueued`, and `stopReason`. `verifiedLanguage` means metadata was found, not necessarily that its language matches the selected filter. `eligibility` counts unknown/other languages, excluded songs and capped references. Language enrichment skips inactive/capped references and interleaves the remaining references before using the shared request budget. These fixes preserve language validation; missing provider metadata can still prevent a complete batch. Existing unexpired preview-cpu-1 drafts are retained.

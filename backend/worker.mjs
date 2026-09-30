@@ -10,7 +10,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'preview-cpu-1';
+export const RECOMMENDER_BUILD = 'discovery-audit-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -153,7 +153,7 @@ async function refresh(env,language='Mixed') {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const modern=discoveryEnabled(env);
     discoveryCache=state.songDiscovery||{queries:{},languages:{},backoff:{}};state.songDiscovery=discoveryCache;
@@ -322,6 +322,10 @@ export default {
       if(path==='/refresh'){const language=languageSelection(body.languages??body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
       if(path==='/comfort/shuffle'){await ipLimit(request,env.DB);return reply(await mutate(env.DB,s=>{s.comfortRotation=(Number(s.comfortRotation)||0)+1;}));}
       if(path==='/preview') {
+        const previewResult=(preview,diagnostics)=>{
+          console.warn(JSON.stringify({event:'munna-preview',build:RECOMMENDER_BUILD,...diagnostics,found:!!preview}));
+          return reply({preview,diagnostics});
+        };
         if(body.provider!==undefined){
           if(!['apple','deezer'].includes(body.provider)||!Number.isSafeInteger(body.id)||body.id<=0)throw fail(400,'Choose a catalog search result.');
           await ipLimit(request,env.DB);
@@ -331,14 +335,16 @@ export default {
             const response=await get(url);if(!response.ok)throw Error();const data=await response.json();
             const raw=body.provider==='deezer'?data:data.results?.find(t=>t.trackId===body.id),song=catalogSong(body.provider,raw);
             if(!song||song.id!==body.id)throw Error();
-            return reply({preview:body.provider==='deezer'?(safePreviewUrl(raw.preview)?{url:safePreviewUrl(raw.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+song.id}:null):applePreview(raw)||await findPreview(song,get)});
+            const direct=body.provider==='deezer'?(safePreviewUrl(raw.preview)?{url:safePreviewUrl(raw.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+song.id}:null):applePreview(raw);
+            const diagnostics={attempts:[{provider:body.provider,mode:'catalog_id',outcome:direct?'found':'no_playable_preview'}]};
+            return previewResult(direct||await findPreview(song,get,diagnostics),diagnostics);
           }catch{throw fail(503,'Could not load this catalog preview. Try the listening links.');}
         }
 
         const song=cleanSong(body),row=await readPublic(env.DB);
         if(!knownSongs(row.state).some(t=>songKey(t)===songKey(song)))throw fail(400,'Choose a song from the shared dashboard.');
         await ipLimit(request,env.DB);
-        try{return reply({preview:await findPreview(song,budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000))});}
+        try{const diagnostics={};const preview=await findPreview(song,budgetedCatalogFetch(env.CATALOG_FETCH||fetch,{catalogRequests:0},Date.now()+12000),diagnostics);return previewResult(preview,diagnostics);}
         catch{throw fail(503,'Song previews are unavailable right now. Try the listening links instead.');}
       }
       if(path==='/search'||path==='/taste/add') {

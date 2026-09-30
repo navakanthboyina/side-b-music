@@ -24,3 +24,12 @@ test('Wrong versions, wrong artists and unsafe media/store URLs are rejected',as
 test('Both provider failures return no preview without inventing a playable track',async()=>{
  assert.equal(await findPreview(song,async()=>{throw Error('Offline');}),null);
 });
+test('Apple multiple credits match a credited singer and record a safe diagnostic',async()=>{
+ const diagnostics={};const p=await findPreview(song,async()=>Response.json({results:[{...apple,artistName:'Composer & Test Singer'}]}),diagnostics);
+ assert.equal(p.source,'iTunes');assert.equal(diagnostics.attempts[0].outcome,'found');assert.equal(diagnostics.attempts[0].identityMatches,1);
+ assert(!JSON.stringify(diagnostics).includes(song.title));
+});
+test('Preview diagnostics distinguish Apple 429 from absent Deezer identity',async()=>{
+ const d={};assert.equal(await findPreview(song,async u=>new URL(u).hostname==='itunes.apple.com'?new Response('',{status:429}):Response.json({data:[]}),d),null);
+ assert.deepEqual(d.attempts.map(a=>a.outcome),['http_error','no_matching_song']);assert.equal(d.attempts[0].status,429);
+});

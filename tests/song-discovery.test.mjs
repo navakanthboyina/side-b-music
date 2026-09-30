@@ -146,3 +146,19 @@ test('Mixed discovery rotates queried anchors and does not spend its budget on l
  assert.equal(songs.length,1);assert.equal(stats.discovery.requests,1);assert(usedSources.has(songKey(anchor)));
  assert(f.calls.every(c=>new URL(c.url).hostname==='ws.audioscrobbler.com'));
 });
+test('Language enrichment skips capped references before spending metadata requests',async()=>{
+ const f=fixture(),capped={artist:'Capped Singer',title:'Capped Reference'};
+ f.state.seedSongs.push(capped);
+ f.state.songDiscovery={queries:{[songKey(capped)]:{until:200000,tracks:Array.from({length:30},(_,i)=>({artist:'Waste',title:'Unused '+i,match:1,mbid:recording}))}},languages:{},backoff:{}};
+ const existing=[{evidence:{reference:capped}},{evidence:{reference:capped}}],stats={};
+ const rows=await discoverSongs(f.state,f.env,{...f.options,existing,stats});
+ assert.equal(rows.length,1);assert.equal(rows[0].title,'Discovery');assert.equal(f.calls.length,3);
+ assert.equal(stats.discovery.eligibility.cappedReference,30);assert.equal(stats.discovery.enrichmentQueued,1);
+ assert.deepEqual(stats.discovery.requestsByProvider,{'Last.fm':1,MusicBrainz:2});
+});
+test('Verified language outside the requested mix is diagnosed, not silently approved',async()=>{
+ const f=fixture(),fetcher=f.env.DISCOVERY_FETCH;f.env.DISCOVERY_FETCH=async(u,o)=>u.includes('/work/')?Response.json({id:work,languages:['pan']}):fetcher(u,o);
+ const stats={};const rows=await discoverSongs(f.state,f.env,{...f.options,language:'Telugu + Hindi + English',stats});
+ assert.equal(rows.length,0);assert.equal(stats.discovery.verifiedLanguage,1);
+ assert.equal(stats.discovery.eligibility.otherLanguage,1);assert.equal(stats.discovery.eligibility.languages.Punjabi,1);
+});
