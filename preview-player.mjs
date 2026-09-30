@@ -42,7 +42,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
    if(apple){
     attribution.textContent='Preview provided courtesy of iTunes';
     const badge=doc.createElement('img');badge.src='https://tools.applemediaservices.com/api/badges/download-on-itunes/badge/en-us?size=250x83';badge.alt='Download on iTunes';badge.width=120;badge.height=40;source.append(badge);
-   }else {source.textContent='Listen on Deezer ↗';attribution.textContent='Preview from Deezer'+(diagnostics?.cacheHit?' · saved preview':'');}
+   }else {source.textContent='Full song on Deezer ↗';attribution.textContent='Preview from Deezer'+(diagnostics?.cacheHit?' · saved preview':'');}
    audio.src=u.href;status.textContent='Ready · press play for a 30-second preview';
    try{await audio.play();}catch(error){if(mine===ticket){if(error?.name==='NotAllowedError')status.textContent='Ready · press play to start the preview';else if(error?.name!=='AbortError')playbackFailed(error);}}
   }catch{if(mine===ticket){fallback.hidden=false;status.textContent='Preview unavailable. Please try again or find the song on YouTube.';}}

@@ -42,13 +42,24 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
    const delay=Math.max(0,(cache.mbNext||0)-now());
    if(now()+delay+9000>deadline)return null;
    if(delay)await sleep(delay);
-   cache.mbNext=now()+1100;
+   cache.mbNext=now()+2000;
   }
   if(provider!=='MusicBrainz'){const delay=Math.max(0,(cache.providerNext[provider]||0)-now());if(delay)await sleep(delay);cache.providerNext[provider]=now()+500;}
   d.requests++;
   d.requestsByProvider ||= {};d.requestsByProvider[provider]=(d.requestsByProvider[provider]||0)+1;
   try{
    const r=await fetcher(url,{redirect:'manual',signal:AbortSignal.timeout(8000),headers:{Accept:'application/json',...(provider==='MusicBrainz'?{'User-Agent':'MunnasGrooves/2.0 (https://github.com/navakanthboyina/side-b-music)'}:{})}});
+   // One bounded retry for a transient 503, never ignoring Retry-After.
+   if(provider==='MusicBrainz'&&r.status===503&&!(d.metadataRetries>=1)){
+    const retry=r.headers.get('retry-after'),seconds=Number(retry);
+    const wait=retry?(Number.isFinite(seconds)?seconds*1000:Date.parse(retry)-now()):2000;
+    if(Number.isFinite(wait)&&wait>=0&&wait<=2000&&now()+Math.max(2000,wait)+9000<deadline&&d.requests<24&&(d.requestsByProvider.MusicBrainz||0)<18){
+     d.metadataRetries=(d.metadataRetries||0)+1;
+     const attempt={provider,status:503,delayMs:Math.max(2000,wait)};(d.retries||=[]).push(attempt);
+     await sleep(attempt.delayMs);
+     const recovered=await get(url,provider,redirects);attempt.outcome=recovered?'recovered':'failed';return recovered;
+    }
+   }
    // Workers supports manual/follow only. Never follow a credential-bearing URL.
    if(r.status>=300&&r.status<400){
     let target;try{target=new URL(r.headers.get('location')||'',url);}catch{}

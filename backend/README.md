@@ -120,3 +120,9 @@ Preview cooldown attempts include `originalStatus` and `failureAt` for new Apple
 Build `balanced-discovery-1` permits fresh Last.fm seed queries even with a language-enrichment backlog. Known uncached seed queries take priority; Last.fm remains capped at six calls and language enrichment at 18 MusicBrainz calls, within the overall 24-request budget. `metadata_budget` identifies that limit separately. Missing language evidence remains unknown; this change does not guarantee every selected language has enough qualifying songs.
 
 Cached previews report no current `attempts`; prior attempts appear in `historicalAttempts` with `cachedAt` (null for old cache entries). The player shows the working provider without old Apple cooldown warnings. “Playback paused” explicitly offers resume, while actual audio failures remain visible even if a pause event follows.
+
+### Refresh timing and transient metadata recovery
+
+Build `refresh-countdown-1` shows a live room refresh countdown and the local retry time for MusicBrainz language checks, based on the recorded expiry rather than a stale number of seconds. Room cooldown disables Refresh; metadata cooldown is advisory so Mixed and opted-in familiar fallback remain usable. No automatic recommendation refresh is triggered.
+
+MusicBrainz requests are spaced at least two seconds apart. A transient 503 gets at most one retry per generation, after two seconds, only if Retry-After and the request/deadline budget allow it. Longer Retry-After values go straight to the persisted cooldown. `discovery.retries` records delay and recovered/failed outcome; this cannot guarantee upstream service availability. In-site preview buttons and external full-song links are labeled separately.

@@ -211,3 +211,13 @@ test('Language backlog cannot starve new Last.fm seeds or consume every request'
  await discoverSongs(f.state,f.env,{...f.options,stats});
  assert.equal(stats.discovery.requestsByProvider['Last.fm'],1);assert.equal(stats.discovery.requestsByProvider.MusicBrainz,18);assert.equal(stats.discovery.stopReason,'metadata_budget');assert.equal(stats.discovery.requests,19);
 });
+test('A transient MusicBrainz 503 gets one delayed retry and records recovery',async()=>{
+ const f=fixture(),good=f.env.DISCOVERY_FETCH,stats={};let attempts=0;
+ f.env.DISCOVERY_FETCH=async(url,options)=>{if(url.includes('/recording/')&&attempts++===0)return new Response('busy',{status:503});return good(url,options);};
+ const songs=await discoverSongs(f.state,f.env,{...f.options,stats});assert.equal(songs.length,1);assert.equal(stats.discovery.metadataRetries,1);assert.equal(stats.discovery.retries[0].outcome,'recovered');assert.equal(stats.discovery.retries[0].delayMs,2000);assert.equal(stats.discovery.errors.length,0);
+});
+test('Repeated MusicBrainz 503 stops after one retry and preserves the cooldown',async()=>{
+ const f=fixture(),good=f.env.DISCOVERY_FETCH,stats={};let calls=0;
+ f.env.DISCOVERY_FETCH=async(url,options)=>{if(url.includes('musicbrainz.org')){calls++;return new Response('busy',{status:503});}return good(url,options);};
+ await discoverSongs(f.state,f.env,{...f.options,stats});assert.equal(calls,2);assert.equal(stats.discovery.retries[0].outcome,'failed');assert.equal(stats.discovery.providerCooldowns[0].cause.status,503);
+});
