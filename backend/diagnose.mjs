@@ -1,4 +1,4 @@
-import {tailParser} from './tail-parser.mjs';
+import {tailParser,cpuLimitExceeded} from './tail-parser.mjs';
 import {spawn} from 'node:child_process';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
@@ -53,7 +53,7 @@ async function finish(){
  await snapshot('after');
  report.finishedAt=new Date().toISOString();
  const findings=[];
- if(report.events.some(e=>/exceeded.?cpu|cpu.*limit/i.test(JSON.stringify(e))))findings.push('Cloudflare CPU limit exceeded. This is not a language-selection failure.');
+ if(report.events.some(cpuLimitExceeded))findings.push('Cloudflare CPU limit exceeded. This is not a language-selection failure.');
  if(report.events.some(e=>/invalid_json/.test(JSON.stringify(e))))findings.push('AI returned invalid JSON.');
  if(report.events.some(e=>/canceled|cancelled/i.test(e.outcome||'')))findings.push('A request was canceled; the trace alone does not identify why.');
  if(!report.events.length)findings.push('No Worker events captured. Check the Wrangler login/connection; absence of events is not proof of success.');

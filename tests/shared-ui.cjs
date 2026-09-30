@@ -47,13 +47,18 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.equal(b.d.querySelector('[data-language="Telugu"]').disabled,true);
  room.multiLanguage=true;room.languages=['Mixed','Telugu','Hindi'];room.pendingSongCount=0;room.revision++;await b.api.sync();
  b.d.querySelector('[data-language="Telugu"]').click();assert.equal(lastRefresh,null);assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');
- b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu']});await a.api.sync();assert.match(a.d.querySelector('#feed-status').textContent,/Telugu mix/);
+ b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu'],allowUnverifiedFamiliar:false});await a.api.sync();assert.match(a.d.querySelector('#feed-status').textContent,/Telugu mix/);
  b.d.querySelector('[data-language="Hindi"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'true');assert.equal(b.d.querySelector('[data-language="Hindi"]').getAttribute('aria-pressed'),'true');
- b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu','Hindi']});
+ b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastRefresh,{languages:['Telugu','Hindi'],allowUnverifiedFamiliar:false});
  b.d.querySelector('[data-language="Mixed"]').click();assert.equal(b.d.querySelector('[data-language="Telugu"]').getAttribute('aria-pressed'),'false');
  assert(!b.d.querySelector('#view-profile').textContent.includes('Playlist setup is managed'));
  for(const view of ['profile','comfort','plan','discover','discover']){b.w.lastScroll=null;b.d.querySelector('a[href="#'+view+'"]').click();assert.equal(b.d.querySelector('#view-'+view).hidden,false);assert.equal(b.w.lastScroll.top,0);assert.equal(b.d.activeElement,b.d.querySelector('#view-'+view+' h1'));}
  assert.match(b.d.querySelector('#view-plan h1').textContent,/two-day/);assert.match(b.d.querySelector('.week-tabs').textContent,/Day 1/);assert.match(b.d.querySelector('.week-tabs').textContent,/Day 2/);
+ assert.equal(b.d.querySelector('#allow-unverified-familiar').checked,false);
+ assert.equal(b.d.querySelector('#allow-unverified-familiar').disabled,true);
+ room.familiarLanguageOverrideSupported=true;room.revision++;await b.api.sync();
+ b.d.querySelector('#allow-unverified-familiar').click();b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.equal(lastRefresh.allowUnverifiedFamiliar,true);
+ room.batch.items[0].unverifiedFamiliar=true;room.batch.items[0].reusedRating='replay';room.revision++;await a.api.sync();assert.match(a.d.querySelector('#feed').textContent,/Familiar fallback · language unverified/);
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

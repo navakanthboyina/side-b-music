@@ -17,3 +17,11 @@ export function tailParser(onEvent,onText=()=>{}){
   }
  };
 }
+
+export function cpuLimitExceeded(event){
+ const outcome=String(event.outcome||'').toLowerCase().replace(/[^a-z]/g,'');
+ if(outcome==='exceededcpu'||outcome==='exceededcpulimit')return true;
+ const explicit=/\b(?:exceeded CPU(?: time)? limit|CPU time limit exceeded)\b/i;
+ return (event.exceptions||[]).some(e=>explicit.test(String(e.message||'')))||
+  (event.logs||[]).some(l=>l.level==='error'&&explicit.test(Array.isArray(l.message)?l.message.join(' '):String(l.message||'')));
+}

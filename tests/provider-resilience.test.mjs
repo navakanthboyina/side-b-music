@@ -35,3 +35,9 @@ test('Tail parser keeps stdout connection errors and split JSON events',()=>{
  for(let i=0;i<output.length;i+=7)consume(output.slice(i,i+7));
  assert.deepEqual(events,[event]);assert.deepEqual(messages,['Login required']);
 });
+test('CPU diagnostic never confuses cpuTime plus preview limitSource with a CPU failure',async()=>{
+ const {cpuLimitExceeded}=await import('../backend/tail-parser.mjs');
+ assert.equal(cpuLimitExceeded({outcome:'ok',cpuTime:219,exceptions:[],logs:[{level:'warn',message:'{"event":"munna-preview","limitSource":"provider_cooldown"}'}]}),false);
+ assert.equal(cpuLimitExceeded({outcome:'exceededCpu',cpuTime:10}),true);
+ assert.equal(cpuLimitExceeded({outcome:'exception',exceptions:[{message:'Worker exceeded CPU time limit.'}]}),true);
+});

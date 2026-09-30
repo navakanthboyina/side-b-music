@@ -43,7 +43,7 @@ CSV columns: `Artist Name(s),Track Name` or `Artist,Title`; maximum 2 MB each. I
 
 ## Diagnostics
 
-`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `rated-fallback-1`.
+`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `familiar-language-option-1`.
 
 `/admin/ai-check` is an owner-only, explicitly invoked model probe, not part of page loads. It can consume AI allowance. Normal loads, previews and ratings do not call AI. Actual preview activity is stored as small aggregates, separate from explicit ratings.
 
@@ -76,3 +76,9 @@ Fresh discoveries remain first. If discovery finishes with fewer than 12 songs, 
 Diagnostics expose `ratedFallback.added`, `eligible`, `blocked`, `language` and `remaining`. Remaining entries may be duplicates, hit a diversity cap or exceed available slots; they are not all failed songs. Existing compatible drafts survive this upgrade. The dashboard labels returning songs and distinguishes preview-provider failures from a confirmed missing preview. A provider HTTP 429 cannot be eliminated by changing recommendation rules.
 
 For multi-performer preview searches, Deezer gets one shorter-credit retry after a successful response without a playable exact match. The title and credited-artist validation stays unchanged; provider errors are not retried. Diagnostics identify full_credits versus primary_credit without exposing the search query.
+
+## Optional unverified-language familiar fill
+
+Build `familiar-language-option-1` adds `allowUnverifiedFamiliar` (boolean, default false) to POST /refresh. The checkbox is shown beside language selection. With explicit opt-in, liked and Already know songs whose language is unknown can fill an incomplete batch; their language stays Unknown and the card visibly labels the exception. Confirmed other-language tracks, dislikes, duplicate recordings and diversity caps remain enforced. Disabling the option filters unverified familiar songs out of resumed language-filtered drafts. New discoveries still require the selected language evidence. No schema change or new secret is needed.
+
+The diagnostic no longer matches `cpuTime` followed by a preview `limitSource` as a CPU error. Only a specific exceeded-CPU outcome or explicit exception/error message triggers that finding.

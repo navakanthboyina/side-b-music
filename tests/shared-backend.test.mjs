@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'rated-fallback-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'familiar-language-option-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'rated-fallback-1');
- assert.equal(state.pendingSelectionStats.build,'rated-fallback-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'familiar-language-option-1');
+ assert.equal(state.pendingSelectionStats.build,'familiar-language-option-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -750,4 +750,14 @@ test('Upgrade retains nine draft songs and publishes twelve with three labeled r
  assert.equal(r.batch.items.length,12);assert.equal(r.batch.selectionStats.resumedCount,9);assert.equal(r.batch.selectionStats.ratedFallback.added,3);
  assert.equal(r.batch.items.filter(t=>t.reusedRating).length,3);assert.equal(r.batch.items.filter(t=>t.title.startsWith('Fresh')).length,9);assert.equal(r.pendingSongCount,0);
  assert.match(r.message,/3 returning/);s.sqlite.close();
+});
+test('Explicit familiar-language option retains eleven draft songs and fills last slot without relabeling unknown',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);state.songDiscovery.queries={};state.songDiscovery.languages={};
+ state.pending={language:'Telugu',at:Date.now(),selectionStats:{build:'rated-fallback-1'},items:Array.from({length:11},(_,i)=>({artist:'Saved '+i,title:'Fresh '+i,language:'Telugu',reason:'Verified discovery'}))};
+ const rated={artist:'Liked Singer',title:'Liked Song',value:'replay',at:Date.now()};state.songRatings[songKey(rated)]=rated;
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));s.env.AI.run=async()=>{throw Error('quota');};
+ assert.equal((await s.call('/refresh',{language:'Telugu',allowUnverifiedFamiliar:'true'})).status,400);
+ const r=await (await s.call('/refresh',{language:'Telugu',allowUnverifiedFamiliar:true})).json();
+ assert.equal(r.batch.items.length,12);assert.equal(r.batch.items.filter(t=>t.unverifiedFamiliar).length,1);
+ assert.equal(r.batch.items.find(t=>t.unverifiedFamiliar).language,'Unknown');assert.equal(r.batch.selectionStats.ratedFallback.unverifiedAdded,1);s.sqlite.close();
 });

@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'rated-fallback-1';
+export const RECOMMENDER_BUILD = 'familiar-language-option-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -41,7 +41,7 @@ async function readPublic(db) {
   return {...row,state:JSON.parse(row.data)};
 }
 function publicState(row) {
-  return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
+  return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, familiarLanguageOverrideSupported:true, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
     comfortSongs:comfortSongs(row.state), comfortShuffle:true, batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.lastSelectionStats || (row.state.pending?.at>Date.now()-86400000?row.state.pending.selectionStats:null), lastSelectionStats:row.state.lastSelectionStats||null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
@@ -145,7 +145,7 @@ export function inferenceFailure(error) {
   else if(/deprecated|retired|model.*not found|unknown model|model.*not available/i.test(message)){category='model_unavailable';detail='The selected AI model is unavailable.';}
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
-async function refresh(env,language='Mixed') {
+async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
   let referenceCache,catalogCache,discoveryCache,latestStats,cacheSaved=false;
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
@@ -157,8 +157,8 @@ async function refresh(env,language='Mixed') {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
-    let picks=(draft?.items||[]).slice(0,12);const shortlist=[...picks];
+    const draft=[RECOMMENDER_BUILD,'rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    let picks=(draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
     discoveryCache=state.songDiscovery||{queries:{},languages:{},backoff:{}};state.songDiscovery=discoveryCache;
@@ -232,7 +232,7 @@ async function refresh(env,language='Mixed') {
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30||providersPaused()){selectionStats.stopReason=providersPaused()?'both_catalogs_paused':'catalog_budget';break;}
     }
-    if(modern)picks=fillWithRatedSongs(picks,state,language,selectionStats);
+    if(modern)picks=fillWithRatedSongs(picks,state,language,selectionStats,Date.now(),allowUnverifiedFamiliar);
     if(!picks.length&&selectionStats.attempts.length&&selectionStats.attempts.every(a=>a.error==='inference failed'))throw Object.assign(fail(503,selectionStats.attempts.at(-1).inference.detail+' No AI selections were returned. Previous picks remain saved.'),{selectionStats});
     if(!picks.length&&language!=='Mixed'&&selectionStats.attempts.length){
       const missing=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.missingLanguage||0),0),filtered=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.languageFilter||0),0);
@@ -254,7 +254,7 @@ async function refresh(env,language='Mixed') {
     const at=Date.now();
     const complete=picks.length===12;
     if(complete) {
-      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating})=>({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
+      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating,unverifiedFamiliar})=>({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating,unverifiedFamiliar})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
       state.pending=null;
       state.history=[...(state.history||[]).filter(t=>at-t.at<14*86400000),...state.batch.items.map(({artist,title,recordingId})=>({artist,title,recordingId,at}))].slice(-500);
       for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
@@ -346,7 +346,7 @@ export default {
       if(request.method!=='POST'||!['/feedback','/refresh','/search','/taste/add','/preview','/activity','/comfort/shuffle'].includes(path))throw fail(404,'Not found.');
       if(origin!==env.ALLOWED_ORIGIN)throw fail(403,'Use the dashboard to update the shared profile.');
       const body=await bodyOf(request);
-      if(path==='/refresh'){const language=languageSelection(body.languages??body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');return reply(await refresh(env,language));}
+      if(path==='/refresh'){const language=languageSelection(body.languages??body.language);if(!language)throw fail(400,'Choose a supported language or Mixed.');if(body.allowUnverifiedFamiliar!==undefined&&typeof body.allowUnverifiedFamiliar!=='boolean')throw fail(400,'Invalid familiar-song language option.');return reply(await refresh(env,language,body.allowUnverifiedFamiliar===true));}
       if(path==='/comfort/shuffle'){await ipLimit(request,env.DB);return reply(await mutate(env.DB,s=>{s.comfortRotation=(Number(s.comfortRotation)||0)+1;}));}
       if(path==='/activity'){
         const song=cleanSong(body);if(!['play','complete','skip'].includes(body.event)||!uuid(body.eventId))throw fail(400,'Invalid playback event.');

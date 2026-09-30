@@ -35,3 +35,13 @@ test('Language can come from a verified prior batch or cache, never a country or
  s.batch.items[0].languageBasis='MusicBrainz work lyrics language';assert.deepEqual(verifiedSongLanguages(t,s),['Hindi']);
  s.songDiscovery={languages:{[songKey(t)]:{labels:['Telugu'],until:Date.now()+50000}}};assert.deepEqual(verifiedSongLanguages(t,s),['Telugu']);
 });
+test('Explicit opt-in fills eleven picks with an unknown-language familiar song, never a disliked or wrong-language song',()=>{
+ const fresh=Array.from({length:11},(_,i)=>song(i)),s=state([rating(30,'replay',[]),rating(31,'skip',[]),rating(32,'known',['Tamil'])]);
+ const strict={};assert.equal(fillWithRatedSongs(fresh,s,'Telugu',strict).length,11);assert.equal(strict.ratedFallback.unknownLanguage,1);assert.equal(strict.ratedFallback.otherLanguage,1);
+ const stats={},out=fillWithRatedSongs(fresh,s,'Telugu',stats,Date.now(),true);
+ assert.equal(out.length,12);assert.equal(out[11].title,'Song 30');assert.equal(out[11].language,'Unknown');assert.equal(out[11].unverifiedFamiliar,true);assert.equal(stats.ratedFallback.unverifiedAdded,1);
+});
+test('Empty cache language result does not erase a previously verified rating label',()=>{
+ const t=rating(1),s=state([t]);s.songDiscovery={languages:{[songKey(t)]:{labels:[],until:Date.now()+10000}}};
+ assert.deepEqual(verifiedSongLanguages(t,s),['Telugu']);
+});
