@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'refresh-countdown-1';
+export const RECOMMENDER_BUILD = 'listening-room-2';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -240,6 +240,11 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     }
     const metadataPause=selectionStats.discovery?.providerCooldowns?.find(p=>p.provider==='MusicBrainz');
     if(!picks.length&&metadataPause)throw Object.assign(fail(422,`MusicBrainz language checks are paused${metadataPause.cause?.status?' after HTTP '+metadataPause.cause.status:''}. Retry in ${metadataPause.retryAfterSeconds} seconds, or choose Mixed to include songs with unverified language. No new qualifying picks; the previous batch is unchanged.`),{selectionStats});
+    const languageGaps=selectionStats.discovery?.eligibility;
+    if(!picks.length&&language!=='Mixed'&&languageGaps?.unknownLanguage>0){
+      selectionStats.stopReason='language_metadata_missing';
+      throw Object.assign(fail(422,`No verified ${language} matches are available in this search. ${languageGaps.unknownLanguage} candidates have unverified language; ${languageGaps.otherLanguage||0} have another language. Choose All languages to explore unverified-language discoveries, or allow familiar songs with unverified language to fill gaps. Your previous mix is unchanged.`),{selectionStats});
+    }
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
     if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,30000,picks.some(t=>t.reusedRating)?picks:shortlist);
     if(modern&&picks.length===12){

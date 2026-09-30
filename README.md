@@ -96,3 +96,9 @@ Last.fm attribution is displayed for its discoveries. Apple previews retain the 
 Groq GPT-OSS 120B and Gemini Flash-Lite can follow Gemma before deterministic fallback. They are disabled until the owner configures free-tier credentials and confirms account settings. See [activation and data-use details](backend/README.md#optional-ai-fallback-chain). Extra AI services do not resolve missing language metadata or catalog rate limits.
 
 The familiar-language option applies to the next refresh. It preserves a compatible unfinished draft. Changing back to strict mode removes unverified familiar entries from a resumed draft. This does not guess or overwrite a song’s language. `ratedFallback` separates `unknownLanguage`, `otherLanguage`, and `unverifiedAdded`. CPU diagnostics inspect explicit outcome/exception/error fields, never a broad search across preview JSON.
+
+### Listening-room update
+
+Build `listening-room-2` preserves artwork returned by preview lookups across shared-state polling and feedback renders. Deezer audio plays in the inline 30-second player; no full-song Deezer link is shown. Playback failures offer YouTube search.
+
+A zero-result language search now distinguishes missing language metadata from provider cooldowns. The dashboard offers an explicit All languages action without silently changing the selected filter. This does not guarantee language coverage or resolve upstream Apple 429 / MusicBrainz 503 responses. `npm run diagnose` in `backend` still captures provider causes and refresh results.

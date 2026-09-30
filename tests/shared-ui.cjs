@@ -1,15 +1,17 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 (async()=>{
  const {startShared}=await import('../shared-app.mjs');
- let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0},fail=false,lastRefresh=null;
+ let room={revision:0,recommenderVersion:2,batch:{relevanceVersion:2,at:Date.now(),items:[{artist:'Fixture Artist',title:'First',reason:'Test',aiSong:true},{artist:'Fixture Artist',title:'Second',reason:'Test',aiSong:true}]},songRatings:{},seedSongCount:0,previewSupported:true},fail=false,lastRefresh=null;
  const clients=[];
  async function boot(){const dom=new JSDOM(fs.readFileSync(new URL('../index.html','file://'+__filename),'utf8'),{url:'https://music.example',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;
   w.eval(fs.readFileSync(new URL('../data.js','file://'+__filename),'utf8'));w.setInterval=()=>0;w.scrollTo=options=>{w.lastScroll=options;};
+  w.HTMLMediaElement.prototype.play=async function(){};w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};
   w.localStorage.setItem('side-b-v1',JSON.stringify({songRatings:{private:'must not publish'}}));
   w.fetch=async(url,opt)=>{
    assert(!String(opt.body).includes('private'));
    if(fail)return {ok:false,json:async()=>({error:'Service unavailable'})};
    if(url.endsWith('/refresh')){lastRefresh=JSON.parse(opt.body);room.batch.language=lastRefresh.languages?.join(' + ')||lastRefresh.language;room.revision++;}
+   if(url.endsWith('/preview'))return {ok:true,json:async()=>({artwork:'https://cdn-images.dzcdn.net/images/cover/test/500.jpg',preview:{url:'https://cdn-preview-a.dzcdn.net/clip.mp3',link:'https://www.deezer.com/track/1'}})};
    if(url.endsWith('/search'))return {ok:true,json:async()=>({songs:[{provider:'apple',id:42,artist:'Search Fixture',title:'Search Song'}]})};
    if(url.endsWith('/taste/add')){const t=JSON.parse(opt.body);assert.deepEqual(t,{provider:'apple',id:42});room.revision++;room.songRatings['track:searchfixture:searchsong']={artist:'Search Fixture',title:'Search Song',value:'replay',at:Date.now()};room.pendingSongCount=0;}
    if(url.endsWith('/feedback')){const t=JSON.parse(opt.body);room.revision++;room.songRatings['track:fixtureartist:'+t.title.toLowerCase()]={artist:t.artist,title:t.title,value:t.rating,at:Date.now()};}
@@ -17,8 +19,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
   };
   const api=await startShared({apiBase:'https://backend.example'},w.SIDE_B_DATA,w.document,w);clients.push(dom);return {w,d:w.document,api};
  }
- const a=await boot(),b=await boot();assert.equal(a.d.querySelector('#feed').textContent,b.d.querySelector('#feed').textContent);
+ const a=await boot(),b=await boot();
+ a.d.querySelector('#feed [data-preview]').click();await new Promise(r=>setImmediate(r));
+ const cover=a.d.querySelector('#feed .catalog-art');assert(cover);await a.api.sync();assert.equal(a.d.querySelector('#feed .catalog-art'),cover,'unchanged polling preserves the loaded cover node');
+ assert(a.d.querySelector('.player-source').hidden,'Deezer full-song link stays hidden');
+assert.equal(a.d.querySelector('#feed').textContent,b.d.querySelector('#feed').textContent);
  a.d.querySelector('#feed [data-shared-rating][data-title="First"][data-shared-rating="replay"]').click();await new Promise(r=>setImmediate(r));await b.api.sync();
+ assert(a.d.querySelector('#feed .catalog-art'),'artwork survives feedback rendering');
  assert.equal(b.d.querySelector('#feed [data-shared-rating][data-title="First"]').getAttribute('aria-pressed'),'true');
  assert.equal(b.d.querySelector('#feed [data-shared-rating][data-title="Second"]').getAttribute('aria-pressed'),'false');
  assert.equal(b.d.querySelector('#csv-import'),null);assert(!b.d.querySelector('.ai-panel').textContent.includes('WebGPU'));

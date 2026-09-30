@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'refresh-countdown-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'listening-room-2');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'refresh-countdown-1');
- assert.equal(state.pendingSelectionStats.build,'refresh-countdown-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'listening-room-2');
+ assert.equal(state.pendingSelectionStats.build,'listening-room-2');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -760,4 +760,14 @@ test('Explicit familiar-language option retains eleven draft songs and fills las
  const r=await (await s.call('/refresh',{language:'Telugu',allowUnverifiedFamiliar:true})).json();
  assert.equal(r.batch.items.length,12);assert.equal(r.batch.items.filter(t=>t.unverifiedFamiliar).length,1);
  assert.equal(r.batch.items.find(t=>t.unverifiedFamiliar).language,'Unknown');assert.equal(r.batch.selectionStats.ratedFallback.unverifiedAdded,1);s.sqlite.close();
+});
+
+test('Language coverage failure reports missing metadata rather than a provider outage',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);
+ for(const entry of Object.values(state.songDiscovery.languages))entry.labels=[];
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
+ const response=await s.call('/refresh',{language:'Telugu'}),r=await response.json();
+ assert.equal(response.status,422);assert.match(r.error,/unverified language/);assert.match(r.error,/All languages/);
+ assert.equal(r.selectionStats.stopReason,'language_metadata_missing');assert.equal(s.calls().aiCalls,0);
+ assert.equal((await s.state()).batch,null);s.sqlite.close();
 });

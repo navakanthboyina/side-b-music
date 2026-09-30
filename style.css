@@ -36,3 +36,29 @@ body{background:radial-gradient(ellipse at 95% 0,#272033 0,transparent 42%),var(
 @media(prefers-reduced-motion:reduce){.player-vinyl{animation:none}.is-playing .player-vinyl{box-shadow:0 0 0 3px #edb88f}}
 @media(max-width:800px){.preview-player{left:12px;right:12px;bottom:12px;transform:none;width:auto;flex-wrap:wrap;gap:10px;padding:14px}.player-vinyl{width:48px;height:48px}.preview-player audio{width:100%;order:4}.player-close{margin-left:auto}.has-preview{padding-bottom:210px}}
 #comfort-mixes>.notice,#comfort-mixes>#shuffle-comfort{grid-column:1/-1}#shuffle-comfort{justify-self:start;margin-bottom:12px}.mix li{flex-wrap:wrap;gap:10px}.mix li>div{flex:1;min-width:150px}#song-search-results .rating-row{flex-wrap:wrap;gap:12px}
+
+/* Listening room: record-store warmth with clear, modern controls. */
+:root{--accent:#f5ba83;--purple:#d0c0f1;--muted:#c2bbbf}
+.ai-panel{background:radial-gradient(circle at 85% 15%,#69578066,transparent 48%),#27232d;border:1px solid #726078;box-shadow:0 16px 50px #0003}
+.room-copy h2{letter-spacing:-.045em;line-height:1.02;font-size:clamp(2.5rem,4.5vw,4.6rem)}
+.room-facts{flex-wrap:wrap;gap:8px}.room-facts span{border:1px solid #a18b7966;border-radius:6px;padding:7px 10px;background:#17141a66;font-family:monospace}
+.record-sleeve{background:repeating-linear-gradient(0deg,transparent 0 4px,#00000005 4px 5px),#efb780;box-shadow:8px 12px 0 #0003}
+.room-bottom{border-top:1px dashed #ac95b866;padding-top:20px}
+#ai-status{line-height:1.6}#refresh-timing{max-width:350px;line-height:1.5;font-variant-numeric:tabular-nums}
+.filters{border:1px solid var(--line);border-radius:20px;padding:24px;background:#1d1c22}
+.language-chip[aria-pressed="true"]{background:#d9e5b3;color:#20251c;border-color:#d9e5b3}
+.music-card{border:1px solid #4a4148;box-shadow:0 7px 0 #09090b55;transition:transform .18s,border-color .18s}
+.music-card:hover{transform:translateY(-3px);border-color:#a38a75}
+.track-art{height:210px;isolation:isolate;overflow:hidden;background:repeating-radial-gradient(circle at 60% 60%,#ffffff0a 0 1px,transparent 2px 7px),#514258}
+.track-art .catalog-art{position:absolute;inset:0;z-index:1}.art-caption,.art-number{z-index:2;text-shadow:0 2px 5px #0009}.art-number{right:16px;bottom:10px;font-family:monospace}
+.art-caption{max-width:70%;background:#141117dd;border-radius:3px;padding:5px 8px;font-size:.65rem;letter-spacing:.1em}
+.card-top{border-top:1px dashed #766370;padding-top:16px}.card-body h3{line-height:1.25}
+.preview-button{width:100%;min-height:46px;background:#efb780;color:#241c17;border:1px solid #efb780;border-radius:9px;font-weight:750;margin:14px 0 5px}
+.preview-button:hover{background:#f7cca5;color:#241c17}
+.card-feedback .rate{min-height:44px}.track-context summary{padding:8px 0;cursor:pointer}
+.preview-player{border:1px solid #b39a78;box-shadow:0 8px 40px #0009;background:#242128f5;border-radius:20px}
+.player-vinyl{box-shadow:0 0 0 5px #343038,0 0 0 6px #6c5e66}.player-status{line-height:1.45}.player-close{min-width:44px;min-height:44px}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #d9e5b3;outline-offset:4px}
+@media(max-width:640px){.filters{padding:16px}.track-art{height:220px}.room-copy h2{font-size:2.7rem}.music-card:hover{transform:none}.preview-player{max-height:65vh;overflow:auto}}
+@media(prefers-reduced-motion:reduce){.music-card{transition:none}.music-card:hover{transform:none}}
+.discovery-recovery{padding:18px;margin-bottom:18px;background:#312d21;border:1px solid #b4a06c;border-radius:12px}.discovery-recovery p{line-height:1.5}.discovery-recovery small{display:block;margin-top:10px;color:var(--muted)}

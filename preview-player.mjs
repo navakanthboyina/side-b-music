@@ -1,5 +1,5 @@
 // One persistent player. Audio streams from the provider only after a user click.
-export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
+export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{},onArtwork=()=>{}){
  const panel=doc.createElement('aside');panel.className='preview-player';panel.hidden=true;panel.setAttribute('aria-label','Song preview');
  panel.innerHTML='<div class="player-vinyl" aria-hidden="true"><span>MG</span></div><div class="player-info"><strong class="player-title"></strong><span class="player-artist"></span><p class="player-status" role="status"></p><span class="player-attribution"></span><a class="player-source" target="_blank" rel="noopener noreferrer" hidden></a><a class="player-fallback" hidden target="_blank" rel="noopener noreferrer">Find on YouTube ↗</a></div><audio controls preload="none" aria-label="30-second song preview"></audio><button class="player-close" aria-label="Close preview">×</button>';
  doc.body.append(panel);
@@ -11,16 +11,16 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
  audio.addEventListener('playing',()=>{playbackError=false;if(!started){started=true;activity('play');}spinning(true);status.textContent='Playing · '+provider+' preview';});
  audio.addEventListener('pause',()=>{spinning(false);if(audio.getAttribute('src')&&!playbackError)status.textContent='Playback paused · press ▶ to resume '+provider+' preview';});
  audio.addEventListener('waiting',()=>{spinning(false);status.textContent='Buffering preview…';});
- audio.addEventListener('ended',()=>{spinning(false);status.textContent='Preview finished. Open the song link for more.';});
+ audio.addEventListener('ended',()=>{spinning(false);status.textContent='Preview finished. Press play to hear it again.';});
  const playbackFailed=error=>{
-  playbackError=true;spinning(false);
+  playbackError=true;spinning(false);fallback.hidden=false;
   const code=audio.error?.code;
   const detail=({1:'playback interrupted',2:'audio network request failed',3:'audio decoding failed',4:'audio format or URL unavailable'})[code]||
    (error?.name==='NotSupportedError'?'audio format or URL unavailable':'audio playback failed');
-  status.textContent='Preview URL found, but '+detail+'. '+(win.navigator.onLine===false?'Your browser reports no internet connection. ':'')+'Retry the preview or open the provider link.';
+  status.textContent='Preview URL found, but '+detail+'. '+(win.navigator.onLine===false?'Your browser reports no internet connection. ':'')+'Retry the preview or find the song on YouTube.';
  };
  audio.addEventListener('error',()=>{if(audio.getAttribute('src'))playbackFailed(audio.error);});
- audio.addEventListener('timeupdate',()=>{if(started&&!completed&&audio.currentTime>=15){completed=true;activity('complete');}if(audio.currentTime>=30){audio.pause();status.textContent='Preview finished. Open the song link for more.';}});
+ audio.addEventListener('timeupdate',()=>{if(started&&!completed&&audio.currentTime>=15){completed=true;activity('complete');}if(audio.currentTime>=30){audio.pause();status.textContent='Preview finished. Press play to hear it again.';}});
  panel.querySelector('.player-close').addEventListener('click',()=>{ticket++;stop();panel.hidden=true;doc.body.classList.remove('has-preview');});
  doc.addEventListener('click',async e=>{
   const button=e.target.closest('[data-preview]');if(!button)return;
@@ -30,7 +30,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
   panel.querySelector('.player-title').textContent=song.title;panel.querySelector('.player-artist').textContent=song.artist;status.textContent='Finding a preview · Deezer first, then Apple…';
   try{
    const {preview,diagnostics,artwork}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
-   if(artwork){try{const a=new URL(artwork);if(a.protocol==='https:'&&!a.username&&!a.password&&!a.port&&(/^(?:[a-z0-9-]+\.)+mzstatic\.com$/.test(a.hostname)||['cdn-images.dzcdn.net','coverartarchive.org'].includes(a.hostname))){const art=button.closest('.music-card')?.querySelector('.track-art');if(art){let img=art.querySelector('img');if(!img){img=doc.createElement('img');img.className='catalog-art';img.alt='';img.style.cssText='width:100%;height:100%;object-fit:cover';art.prepend(img);}img.src=a.href;img.addEventListener('error',()=>img.remove(),{once:true});}}}catch{}}
+   if(artwork){try{const a=new URL(artwork);if(a.protocol==='https:'&&!a.username&&!a.password&&!a.port&&(/^(?:[a-z0-9-]+\.)+mzstatic\.com$/.test(a.hostname)||['cdn-images.dzcdn.net','coverartarchive.org'].includes(a.hostname))){onArtwork(song,a.href);const art=button.closest('.music-card')?.querySelector('.track-art');if(art){let img=art.querySelector('img');if(!img){img=doc.createElement('img');img.className='catalog-art';img.alt='';img.style.cssText='width:100%;height:100%;object-fit:cover';art.prepend(img);}img.src=a.href;img.addEventListener('error',()=>img.remove(),{once:true});}}}catch{}}
    const attempts=diagnostics?.cacheHit?(diagnostics.historicalAttempts||[]):(diagnostics?.attempts||[]);
    if(!preview){fallback.hidden=false;status.textContent=attempts.some(a=>['http_error','timeout','request_failed','invalid_response','lookup_budget'].includes(a.outcome))?'Preview lookup is temporarily unavailable from one or more providers. Try later or find the song on YouTube.':'No matching preview available. Find the song on YouTube.';attribution.textContent=(diagnostics?.cacheHit?'Previous lookup (cached): ':'')+attempts.map(a=>(a.provider==='iTunes'?'Apple':a.provider)+': '+(a.limitSource==='room_budget'?'shared lookup limit reached':a.limitSource==='provider_cooldown'?'temporarily paused after provider error':a.outcome.replaceAll('_',' ')+(a.status&&a.status!==200?' (HTTP '+a.status+')':''))).join(' · ');return;}
    const u=new URL(preview.url),link=new URL(preview.link);
@@ -42,7 +42,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
    if(apple){
     attribution.textContent='Preview provided courtesy of iTunes';
     const badge=doc.createElement('img');badge.src='https://tools.applemediaservices.com/api/badges/download-on-itunes/badge/en-us?size=250x83';badge.alt='Download on iTunes';badge.width=120;badge.height=40;source.append(badge);
-   }else {source.textContent='Full song on Deezer ↗';attribution.textContent='Preview from Deezer'+(diagnostics?.cacheHit?' · saved preview':'');}
+   }else {source.hidden=true;attribution.textContent='Preview from Deezer'+(diagnostics?.cacheHit?' · saved preview':'');}
    audio.src=u.href;status.textContent='Ready · press play for a 30-second preview';
    try{await audio.play();}catch(error){if(mine===ticket){if(error?.name==='NotAllowedError')status.textContent='Ready · press play to start the preview';else if(error?.name!=='AbortError')playbackFailed(error);}}
   }catch{if(mine===ticket){fallback.hidden=false;status.textContent='Preview unavailable. Please try again or find the song on YouTube.';}}
