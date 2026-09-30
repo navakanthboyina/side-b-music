@@ -10,7 +10,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'musicbrainz-missing-1';
+export const RECOMMENDER_BUILD = 'discovery-diversity-1';
 export const MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -28,7 +28,7 @@ async function read(db) {
 }
 function publicState(row) {
   return { revision: row.revision, recommenderVersion: RELEVANCE_VERSION, recommenderBuild: RECOMMENDER_BUILD, batch: row.state.batch?.relevanceVersion===RELEVANCE_VERSION ? row.state.batch : null, needsTasteImport: !(row.state.seedSongs?.length), songRatings: row.state.songRatings,
-    comfortSongs:comfortSongs(row.state), comfortShuffle:true, batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.pending?.selectionStats || null,
+    comfortSongs:comfortSongs(row.state), comfortShuffle:true, batchTarget: 12, previewSupported:true, multiLanguage:true, languages:LANGUAGES, pendingLanguage:row.state.pending?.language||'Mixed', pendingSelectionStats: row.state.lastSelectionStats || (row.state.pending?.at>Date.now()-86400000?row.state.pending.selectionStats:null), lastSelectionStats:row.state.lastSelectionStats||null,
     pendingSongCount: row.state.pending?.at>Date.now()-86400000 ? row.state.pending.items.length : 0,
     refreshing: row.lease_until > Date.now(), nextRefresh: row.next_refresh,
     seedSongCount: Object.keys(row.state.familiar).length, model: MODEL };
@@ -132,7 +132,7 @@ export function inferenceFailure(error) {
   return {category,detail,...(numericCode?{code:numericCode}:{})};
 }
 async function refresh(env,language='Mixed') {
-  let referenceCache,catalogCache,discoveryCache,cacheSaved=false;
+  let referenceCache,catalogCache,discoveryCache,latestStats,cacheSaved=false;
   const now = Date.now(), lease = crypto.randomUUID();
   const locked = await query(env.DB, 'UPDATE community SET lease=?, lease_until=?, next_refresh=? WHERE id=1 AND lease_until<=? AND next_refresh<=?', lease, now+180000, now+60000, now, now).run();
   if (!locked.meta.changes) throw fail(409, 'A shared batch is generating, or refresh is cooling down. Wait a minute and check again.');
@@ -143,11 +143,11 @@ async function refresh(env,language='Mixed') {
     const row = await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);
     const modern=discoveryEnabled(env);
     discoveryCache=state.songDiscovery||{queries:{},languages:{},backoff:{}};state.songDiscovery=discoveryCache;
-    const selectionStats={engine:modern?'Last.fm + MusicBrainz':'legacy catalog',build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
+    const selectionStats=latestStats={at:now,engine:modern?'Last.fm + MusicBrainz':'legacy catalog',build:RECOMMENDER_BUILD,target:12,language,resumedCount:picks.length,candidateCount:0,catalogRequests:0,pools:[],attempts:[]};
     const usedSources=new Set(draft?.usedSources||[]),examined=new Set([...(draft?.examined||[]),...picks.map(songKey)]),deadline=now+155000;
     referenceCache=state.referenceLanguageCache||{};state.referenceLanguageCache=referenceCache;
     const referenceQueue=modern||language==='Mixed'?null:await prioritizeLanguageReferences(tasteAnchors(state,usedSources,64),language,input=>env.AI.run(MODEL,input),selectionStats,Math.min(20000,deadline-Date.now()),referenceCache);
@@ -164,7 +164,7 @@ async function refresh(env,language='Mixed') {
       const poolStats={pool:pool+1,candidates:0,accepted:0};selectionStats.pools.push(poolStats);
       let candidates;
       try {
-        if(modern){poolStats.discoveryMode='saved song-to-song discovery';candidates=await discoverSongs(state,env,{anchors,excluded:examined,language,stats:selectionStats,deadline});}
+        if(modern){poolStats.discoveryMode='saved song-to-song discovery';candidates=await discoverSongs(state,env,{anchors,excluded:examined,usedSources,existing:picks,language,stats:selectionStats,deadline});}
         else {candidates=language==='Mixed'?[]:await searchLanguageCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,language,stats:poolStats});
         if(candidates.length)poolStats.discoveryMode='language search';
         else {poolStats.discoveryMode='reference release fallback';candidates=await collectCandidates(poolState,fetchCatalog,{anchors,usedSources,excluded:examined,sourceLimit:6,language});}}
@@ -215,6 +215,7 @@ async function refresh(env,language='Mixed') {
       throw Object.assign(fail(422,`No new ${language} picks were approved. ${missing?'AI omitted valid language labels for '+missing+' entries. ':''}${filtered?filtered+' entries were another language or Unknown. ':''}${selectionStats.attempts.some(a=>a.formatError)?'Some AI replies had an invalid format. ':''}The previous batch is unchanged. Try All languages or refresh for other playlist references.`),{selectionStats});
     }
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
+    state.lastSelectionStats=selectionStats;
     const at=Date.now();
     const complete=picks.length===12;
     if(complete) {
@@ -230,6 +231,7 @@ async function refresh(env,language='Mixed') {
     cacheSaved=true;
     return {...publicState(await read(env.DB)),generationStatus:complete?'saved':'pending',message:complete?'12 new AI picks saved for everyone.':`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
   } finally {
+    if(latestStats&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.lastSelectionStats',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(latestStats),lease).run();
     if(discoveryCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(discoveryCache),lease).run();
     if(referenceCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.referenceLanguageCache',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(referenceCache),lease).run();
     if(catalogCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.catalogCache',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(catalogCache),lease).run();
@@ -376,7 +378,7 @@ export default {
     try{
       state=(await read(env.DB)).state;
       const anchors=tasteAnchors({...state,rotation:(state.discoveryRotation||0)+state.rotation},new Set(),16);
-      await discoverSongs(state,env,{anchors,deadline:now+45000});
+      await discoverSongs(state,env,{anchors,enrichLanguage:true,deadline:now+45000});
       await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?),'$.discoveryRotation',?),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(state.songDiscovery),(state.discoveryRotation||0)+1,lease).run();
     }finally{await query(env.DB,'UPDATE community SET lease=NULL,lease_until=0 WHERE id=1 AND lease=?',lease).run();}
   }

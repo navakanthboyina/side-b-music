@@ -201,3 +201,11 @@ Live diagnostics showed MusicBrainz HTTP 301 responses were blocked before langu
 HTTP 404 on an individual recording/work lookup no longer pauses all MusicBrainz requests. A missing recording ID triggers one exact title-and-artist search. Ambiguous/no matches remain unknown. Merged IDs still require exact song identity checks. Missing work data is cached as unknown for one day; it cannot establish a language. Genuine outages keep their backoff. Existing drafts remain compatible for their normal lifetime. Diagnostics separate `notFound.recording`, `notFound.work` and `recordingSearchFallbacks`. This fixes lookup recovery, not missing regional catalog coverage.
 
 GitHub Actions runs the Node regression suite and both Cloudflare workerd request checks on pushes and pull requests. No provider keys or Cloudflare deployment credentials are used. Live provider availability and multilingual coverage still need checking after deployment.
+
+### Candidate diversity and current diagnostics (discovery-diversity-1)
+
+Each ranking pool includes at most four candidates per reference. References that already supplied two approved songs are excluded before ranking; queried references advance between pools instead of repeating the same first six. Song-level exclusions and AI relevance thresholds are unchanged.
+
+Mixed discovery can rank candidates with unknown language without calling MusicBrainz on every refresh. Language-specific requests still require supported language metadata. The daily warm job continues enriching language data. Candidate/language cache bounds still apply to early returns.
+
+Every attempted refresh with selection diagnostics now persists them, including zero-result failures. GET /state returns lastSelectionStats; pendingSelectionStats is retained as a compatibility alias for the latest diagnostics. Expired draft diagnostics are no longer presented as current. Drafts still expire after 24 hours without progress, so pendingSongCount can be zero even when an older log showed a partial draft.

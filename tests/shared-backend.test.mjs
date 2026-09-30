@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'musicbrainz-missing-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'discovery-diversity-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -679,4 +679,17 @@ test('Daily discovery warm preserves batch and draft and respects the shared gen
  assert.deepEqual(stored.pending,state.pending);assert.equal(stored.discoveryRotation,1);
  s.sqlite.prepare('UPDATE community SET lease=?,lease_until=?').run('other-refresh',Date.now()+60000);
  await worker.scheduled({},s.env);stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.equal(stored.discoveryRotation,1);s.sqlite.close();
+});
+
+test('Failed refresh persists its own diagnostics instead of exposing an expired draft',async()=>{
+ const s=setup();const data=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);
+ data.pending={at:Date.now()-2*86400000,items:[{artist:'Old',title:'Old draft'}],selectionStats:{build:'old-build',candidateCount:30}};
+ s.sqlite.prepare('UPDATE community SET data=?').run(JSON.stringify(data));
+ s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
+ const response=await s.call('/refresh',{});assert.equal(response.status,422);
+ const failure=await response.json(),state=await s.state();
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'discovery-diversity-1');
+ assert.equal(state.pendingSelectionStats.build,'discovery-diversity-1');
+ assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
+ s.sqlite.close();
 });

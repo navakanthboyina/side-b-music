@@ -130,3 +130,19 @@ test('Merged recording IDs retain exact song identity validation',async()=>{
  };
  assert.equal((await discoverSongs(f.state,f.env,f.options)).length,1);
 });
+
+test('Cached pools cap reference concentration and skip references already filling two slots',async()=>{
+ const f=fixture(),key=songKey(anchor);
+ const tracks=Array.from({length:30},(_,i)=>{const t={artist:'Discovery Singer '+i,title:'New Song '+i};return {...t,id:songKey(t),match:.9};});
+ f.state.songDiscovery={queries:{[key]:{until:200000,tracks}},languages:{},backoff:{}};
+ f.env.DISCOVERY_FETCH=async()=>{throw Error('Mixed cached discovery should not need language lookup');};
+ const songs=await discoverSongs(f.state,f.env,{...f.options,language:'Mixed'});assert.equal(songs.length,4);
+ const existing=tracks.slice(0,2).map(t=>({...t,evidence:{reference:anchor}}));
+ const after=await discoverSongs(f.state,f.env,{...f.options,language:'Mixed',existing});assert.equal(after.length,0);
+});
+test('Mixed discovery rotates queried anchors and does not spend its budget on language lookup',async()=>{
+ const f=fixture(),usedSources=new Set(),stats={};
+ const songs=await discoverSongs(f.state,f.env,{...f.options,language:'Mixed',usedSources,stats});
+ assert.equal(songs.length,1);assert.equal(stats.discovery.requests,1);assert(usedSources.has(songKey(anchor)));
+ assert(f.calls.every(c=>new URL(c.url).hostname==='ws.audioscrobbler.com'));
+});

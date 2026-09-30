@@ -12,7 +12,7 @@ export function sourceLink(value){try{const u=new URL(value);return u.protocol==
 export function workLanguages(work){return [...new Set([...(Array.isArray(work.languages)?work.languages:[]),work.language].map(c=>codes[c]).filter(Boolean))];}
 
 // Private, bounded state: no credential-bearing URLs, raw replies or listening history.
-export async function discoverSongs(state,env,{anchors,excluded=new Set(),language='Mixed',stats={},deadline=Date.now()+45000,now=()=>Date.now(),sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}) {
+export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSources=new Set(),existing=[],enrichLanguage=false,language='Mixed',stats={},deadline=Date.now()+45000,now=()=>Date.now(),sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}) {
  if(!discoveryEnabled(env))throw Error('Song discovery needs a Last.fm key and public-use approval.');
  const cache=state.songDiscovery ||= {queries:{},languages:{},backoff:{},mbNext:0};
  cache.queries ||= {};cache.languages ||= {};cache.backoff ||= {};
@@ -66,10 +66,18 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
  }
  const active=new Map([...(state.seedSongs||[]),...Object.values(state.songRatings||{}).filter(t=>t.value==='replay')].filter(t=>!state.songRatings?.[songKey(t)]||state.songRatings[songKey(t)].value==='replay').map(t=>[songKey(t),t]));
  const denied=t=>excluded.has(songKey(t))||!!state.songRatings?.[songKey(t)]||!!state.familiar?.[songKey(t)]||(state.seedSongs||[]).some(s=>songKey(s)===songKey(t));
+ const trimCache=()=>{
+ for(const [key,q] of Object.entries(cache.queries))if(q.until<=now()||!active.has(key))delete cache.queries[key];
+ cache.queries=Object.fromEntries(Object.entries(cache.queries).slice(-40));
+ cache.languages=Object.fromEntries(Object.entries(cache.languages).filter(([,v])=>v.until>now()).slice(-400));
+ };
+ const referenceCounts=new Map();
+ for(const t of existing){if(t.evidence?.reference){const k=songKey(t.evidence.reference);referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}}
+ const cappedReferences=new Set([...referenceCounts].filter(([,n])=>n>=2).map(([k])=>k));
  const available=()=>{
   const rows=[],seen=new Set();
   for(const [key,q] of Object.entries(queries())){
-   if(q.until<=now()||!active.has(key))continue;
+   if(q.until<=now()||!active.has(key)||cappedReferences.has(key))continue;
    for(const t of q.tracks){
     if(denied(t)||seen.has(songKey(t)))continue;
     const info=cache.languages[songKey(t)],labels=info?.until>now()?info.labels:[];
@@ -80,13 +88,13 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
    }
   }
   // Interleave starting songs so a large response from one reference cannot monopolize the pool.
-  const buckets=new Map();for(const t of rows.sort((a,b)=>b.match-a.match)){const k=t.anchorIds[0];if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(t);}
+  const buckets=new Map();for(const t of rows.sort((a,b)=>b.match-a.match)){const k=t.anchorIds[0];if(!buckets.has(k))buckets.set(k,[]);if(buckets.get(k).length<4)buckets.get(k).push(t);}
   const out=[];while(out.length<24&&[...buckets.values()].some(a=>a.length))for(const list of buckets.values()){if(list.length&&out.length<24)out.push(list.shift());}return out;
  };
  let rows=available();
- if(rows.length>=24){d.cacheHits+=rows.length;return rows;}
- for(const a of anchors.slice(0,6)){
-  const key=songKey(a);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
+ if(rows.length>=24){d.cacheHits+=rows.length;trimCache();return rows;}
+ for(const a of anchors.filter(a=>!cappedReferences.has(songKey(a))).slice(0,6)){
+  const key=songKey(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
   const u=new URL('https://ws.audioscrobbler.com/2.0/');
   u.search=new URLSearchParams({method:'track.getsimilar',artist:a.artist,track:a.title,autocorrect:'0',limit:'30',format:'json',api_key:env.LASTFM_API_KEY});
   const response=await get(u.href,'Last.fm');if(!response)continue;
@@ -97,6 +105,8 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   if(response.ttl>0)cache.queries[key]={until:now()+response.ttl,tracks};
   else transient[key]={until:deadline+1,tracks};
  }
+ // Mixed ranking does not require language labels. Enrich separately during daily warming.
+ if(language==='Mixed'&&!enrichLanguage){rows=available();d.eligible=rows.length;trimCache();return rows;}
  // Resolve recordings, then their performed works. Release text-language is never a song label.
  const candidates=Object.values(queries()).filter(q=>q.until>now()).flatMap(q=>q.tracks).filter(t=>!denied(t));
  const visited=new Set();
@@ -129,9 +139,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),langua
   if(missingWork){missing();continue;}
   if(complete){cache.languages[key]={recordingId:id,labels:[...new Set(labels)],until:now()+(labels.length?30*DAY:DAY)};if(labels.length)d.verifiedLanguage++;else d.unknownLanguage++;}
  }
- for(const [key,q] of Object.entries(cache.queries))if(q.until<=now()||!active.has(key))delete cache.queries[key];
- cache.queries=Object.fromEntries(Object.entries(cache.queries).slice(-40));
- cache.languages=Object.fromEntries(Object.entries(cache.languages).filter(([,v])=>v.until>now()).slice(-400));
+ trimCache();
  d.errors=d.errors.slice(-12);
  rows=available();d.eligible=rows.length;return rows;
 }
