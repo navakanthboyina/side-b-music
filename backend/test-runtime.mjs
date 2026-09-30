@@ -31,7 +31,7 @@ export default {async fetch(){
  const reference={id:1,artist:'Reference Artist',title:'Reference Song',source:'playlist song'};
  const state={seedSongs:[reference],songRatings:{},familiar:{}};
  const stats={};let calls=0;
- const env={LASTFM_API_KEY:'fixture-key',LASTFM_PUBLIC_APPROVED:'true',DISCOVERY_FETCH:async(url,options)=>{
+ const env={LISTENBRAINZ_ENABLED:'false',LASTFM_API_KEY:'fixture-key',LASTFM_PUBLIC_APPROVED:'true',DISCOVERY_FETCH:async(url,options)=>{
   new Request(url,options);calls++;
   return Response.json({similartracks:{track:[]}});
  }};

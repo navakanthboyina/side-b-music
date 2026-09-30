@@ -11,7 +11,7 @@ export function applePreview(track){
  return {url,source:'iTunes',duration:30,link:link.href,attribution:'Preview provided courtesy of iTunes'};
 }
 // Counts and provider statuses only: no search terms, taste profile or media URLs in logs.
-export async function findPreview(song,fetchCatalog,diagnostics={}){
+export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
  diagnostics.attempts ||= [];
  for(const country of PREVIEW_COUNTRIES){
   const attempt={provider:'iTunes',country};diagnostics.attempts.push(attempt);
@@ -19,9 +19,15 @@ export async function findPreview(song,fetchCatalog,diagnostics={}){
    const response=await fetchCatalog('https://itunes.apple.com/search?'+new URLSearchParams({term:song.artist+' '+song.title,entity:'song',media:'music',country,limit:'15'}),{timeoutMs:3500});
    attempt.status=response.status;
    if(!response.ok){attempt.outcome='http_error';break;}
+   const cc=response.headers.get('cache-control')||'';
+   if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;
+   const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
    const data=await response.json();if(!Array.isArray(data.results)){attempt.outcome='invalid_response';break;}
    const matches=data.results.filter(t=>norm(t.trackName)===norm(song.title)&&artistMatch(song.artist,t.artistName||''));
    attempt.rows=data.results.length;attempt.identityMatches=matches.length;
+   const catalog=matches[0];
+   if(catalog){resource.apple={id:catalog.trackId,country,link:applePreview(catalog)?.link||(/^https:\/\/(music|itunes)\.apple\.com\//.test(catalog.trackViewUrl||'')?catalog.trackViewUrl:null),album:catalog.collectionName,genre:catalog.primaryGenreName};
+    if(/^https:\/\/[^/]+\.mzstatic\.com\//.test(catalog.artworkUrl100||'')){resource.artwork=catalog.artworkUrl100;resource.artworkSource='iTunes';}}
    const t=matches.find(applePreview);
    attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
    if(t){diagnostics.selectedProvider='iTunes';return {...applePreview(t),country};}
@@ -31,11 +37,12 @@ export async function findPreview(song,fetchCatalog,diagnostics={}){
  try{
   const response=await fetchCatalog('https://api.deezer.com/search?'+new URLSearchParams({q:song.artist+' '+song.title,limit:'25'}),{timeoutMs:3500});
   attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';return null;}
+  const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
   const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';return null;}
   const matches=data.data.filter(t=>Number.isSafeInteger(t.id)&&t.id>0&&norm(t.title)===norm(song.title)&&artistMatch(song.artist,t.artist?.name||''));
   attempt.rows=data.data.length;attempt.identityMatches=matches.length;
   const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
-  if(t)diagnostics.selectedProvider='Deezer';
+  if(t){diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};}
   return t?{url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id}:null;
  }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';return null;}
 }

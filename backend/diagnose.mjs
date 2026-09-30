@@ -65,6 +65,9 @@ async function finish(){
  if(report.events.some(e=>/invalid_json/.test(JSON.stringify(e))))findings.push('AI returned invalid JSON.');
  if(report.events.some(e=>/canceled|cancelled/i.test(e.outcome||'')))findings.push('A request was canceled; the trace alone does not identify why.');
  if(!report.events.length)findings.push('No Worker events captured. Check the Wrangler login/connection; absence of events is not proof of success.');
+ const latest=report.snapshots.at(-1)?.diagnostics;
+ if(latest?.ai?.mode==='deterministic'&&latest.ai.fallbackReason)findings.push('AI fallback: '+latest.ai.fallbackReason+'. Deterministic taste ranking was retained.');
+ if(latest?.discovery?.eligibility)findings.push('Discovery filters: '+JSON.stringify(latest.discovery.eligibility));
  report.findings=findings;
  console.log('\nFindings:\n'+(findings.join('\n')||'No known failure pattern captured. Inspect the before/after diagnostics.'));
  const dir=path.join(cwd,'.diagnostics');await mkdir(dir,{recursive:true});
@@ -74,6 +77,6 @@ async function finish(){
 }
 process.on('SIGINT',()=>void finish());
 process.on('SIGTERM',()=>void finish());
-console.log('Watching this Worker for 3 minutes. Once logging connects and no generation is active, click Refresh ONCE in the dashboard. Also click a song preview to capture iTunes/Deezer outcomes. Do not also run a curl refresh. Ctrl+C saves early. This command does not trigger a refresh.');
+console.log('Watching this Worker for 3 minutes. The BEFORE snapshot is the previous attempt; wait for the AFTER snapshot before sharing the report. Once logging connects and no generation is active, click Refresh ONCE in the dashboard. Also click a song preview to capture iTunes/Deezer outcomes. Do not also run a curl refresh. Ctrl+C saves early. This command does not trigger a refresh.');
 await snapshot('before');
 if(!finished)timer=setTimeout(()=>void finish(),180000);

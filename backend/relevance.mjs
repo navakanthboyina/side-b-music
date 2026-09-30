@@ -11,7 +11,8 @@ export function tasteAnchors(state,usedSources=new Set(),limit=16) {
  const seeds=(state.seedSongs||[]).filter(t=>!state.songRatings[songKey(t)]);
  const rotated=seeds.length?Array.from({length:seeds.length},(_,i)=>seeds[(state.rotation*12+i)%seeds.length]):[];
  const seen=new Set(),counts=new Map(),out=[];
- for(const t of [...liked.slice(0,8),...rotated]) {
+ const engaged=rotated.filter(t=>(state.activity?.[songKey(t)]?.completions||0)>(state.activity?.[songKey(t)]?.skips||0)).slice(0,4);
+ for(const t of [...liked.slice(0,8),...engaged,...rotated]) {
   if(usedSources.has(songKey(t)))continue;
   const names=credits(t.artist);if(names.every(n=>usedSources.has(norm(n))))continue;
   const k=songKey(t),artist=names[0];if(!artist||seen.has(k)||(counts.get(norm(artist))||0)>=2)continue;
@@ -83,7 +84,7 @@ export function selectionFormat(count) {
 
 export function validEvidence(t,a) {
  const e=t?.evidence;
- if(e?.type==='similar_track')return e.provider==='Last.fm'&&e.candidateId===t.id&&t.id===songKey(t)&&songKey(e.reference)===songKey(a)&&Number.isFinite(e.match)&&e.match>0;
+ if(e?.type==='similar_track')return ['Last.fm','ListenBrainz'].includes(e.provider)&&e.candidateId===t.id&&t.id===songKey(t)&&songKey(e.reference)===songKey(a)&&Number.isFinite(e.match)&&e.match>0;
  if(e?.type==='same_artist_language')return ['Apple','Deezer'].includes(e.provider)&&e.candidateId===t.id&&Number.isSafeInteger(t.id)&&t.id>0&&Number.isSafeInteger(e.album?.id)&&e.album.id>0&&typeof e.album.title==='string'&&songKey(e.reference)===songKey(a)&&matchesArtist(a.artist,t.artist)&&!!catalogLanguage(t);
  return e?.type==='same_release'&&['Apple','Deezer'].includes(e.provider)&&Number.isSafeInteger(e.album?.id)&&e.album.id>0&&typeof e.album.title==='string'&&e.album.title.trim().length>0&&e.candidateId===t.id&&Number.isSafeInteger(t.id)&&t.id>0&&Number.isSafeInteger(e.reference?.id)&&e.reference.id>0&&e.reference.id!==t.id&&songKey(e.reference)===songKey(a);
 }

@@ -10,6 +10,7 @@ self.onmessage = async ({data}) => {
       await clearModelDownloads(self.caches,records([MODEL,LEGACY_MODEL]));
       self.postMessage({type:'cleared'});return;
     }
+    if(!Array.isArray(data.profile?.candidates)||!data.profile.candidates.length)throw Error('Verified candidates are required. Free-form song generation is disabled.');
     if(!engine){
       self.postMessage({type:'progress',text:'Preparing Lightweight AI and removing the old large-model download…'});
       await clearModelDownloads(self.caches,records([LEGACY_MODEL]));

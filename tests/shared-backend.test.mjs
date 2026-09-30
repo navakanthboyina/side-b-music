@@ -29,7 +29,7 @@ function fixtureCatalog(input){
  throw Error('Unexpected fixture URL');
 }
 function setup(){
- const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../backend/migrations/0001_community.sql',import.meta.url),'utf8'));
+ const sqlite=new DatabaseSync(':memory:');for(const name of fs.readdirSync(new URL('../backend/migrations/',import.meta.url)).sort())sqlite.exec(fs.readFileSync(new URL('../backend/migrations/'+name,import.meta.url),'utf8'));
  const DB={prepare(sql){return {bind(...args){return {
   async first(){return sqlite.prepare(sql).get(...args)||null;},
   async run(){return {meta:{changes:Number(sqlite.prepare(sql).run(...args).changes)}};}
@@ -37,7 +37,7 @@ function setup(){
  const seedSongs=Array.from({length:16},(_,i)=>({artist:'Fixture Artist '+i,title:'Anchor Song '+i}));
  const row=sqlite.prepare('SELECT data FROM community WHERE id=1').get();const data=JSON.parse(row.data);data.seedSongs=seedSongs;data.familiar=Object.fromEntries(seedSongs.map(t=>[songKey(t),true]));sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(data));
  let aiCalls=0, catalogCalls=0;
- const env={DB,ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(input){catalogCalls++;return fixtureCatalog(input);}};
+ const env={DB,LISTENBRAINZ_ENABLED:'false',ALLOWED_ORIGIN:'https://music.example',ADMIN_TOKEN:'test-owner-secret',AI:{async run(model,input){aiCalls++;return {response:selection(input)};}},async CATALOG_FETCH(input){catalogCalls++;return fixtureCatalog(input);}};
  let ranker=env.AI.run;
  const wrap=fn=>async(model,input)=>{const p=JSON.parse(input.messages[1]?.content||'{}');if(p.task==='language_references')return {response:{picks:p.candidates.map(t=>({id:t.id,language:p.preference.split(' + ')[0]}))}};return fn(model,input);};
  ranker=wrap(ranker);Object.defineProperty(env.AI,'run',{get:()=>ranker,set:fn=>{ranker=wrap(fn);}});
@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'discovery-audit-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'candidate-ranking-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -342,7 +342,7 @@ test('Four-candidate schema cannot request fabricated IDs or 24 picks',()=>{
 test('Malformed first plain reply retries and completes twelve',async()=>{
  const s=setup();let calls=0;
  s.env.AI.run=async(model,input)=>{
-  assert.equal(model,'@cf/meta/llama-3.1-8b-instruct-fp8');
+  assert.equal(model,'@cf/google/gemma-4-26b-a4b-it');
   const candidates=JSON.parse(input.messages[1].content).candidates;
   assert.equal(input.response_format,undefined);
   if(++calls===1)return {response:'{"picks":['};
@@ -525,8 +525,8 @@ test('Preview endpoint returns only a matching song preview and does not mutate 
  const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});
  const response=await s.call('/preview',fixture);assert.equal(response.status,200);const r=await response.json();assert.equal(r.preview.link,'https://www.deezer.com/track/42');assert.equal((await s.state()).revision,before.revision);
  assert.equal((await s.call('/preview',{artist:'Unknown',title:'Not in the room'})).status,400);
- s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:'Unrelated Artist'},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);
- s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://evil.example/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);s.sqlite.close();
+ s.sqlite.exec('DELETE FROM song_resources');s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:'Unrelated Artist'},title:fixture.title,preview:'https://cdn-preview-a.dzcdn.net/stream/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);
+ s.sqlite.exec('DELETE FROM song_resources');s.env.CATALOG_FETCH=async()=>Response.json({data:[{id:42,artist:{name:fixture.artist},title:fixture.title,preview:'https://evil.example/test.mp3'}]});assert.equal((await (await s.call('/preview',fixture)).json()).preview,null);s.sqlite.close();
 });
 
 
@@ -584,7 +584,7 @@ test('Comfort shuffle is shared, uses playlist songs and preserves draft and rat
  const after=await (await s.call('/comfort/shuffle',{})).json();assert.notDeepEqual(after.comfortSongs,before.comfortSongs);assert.deepEqual(after.songRatings,before.songRatings);assert.equal(after.pendingLanguage,'Telugu');assert.deepEqual((await s.state()).comfortSongs,after.comfortSongs);s.sqlite.close();
 });
 test('Search preview uses server-verified catalog ID without adding feedback',async()=>{
- const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async url=>{assert.equal(String(url),'https://api.deezer.com/track/42');return Response.json({id:42,artist:{name:'Found Artist'},title:'Found Song',preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'});};
+ const s=setup(),before=await s.state();s.env.CATALOG_FETCH=async url=>{const u=new URL(url),track={id:42,artist:{name:'Found Artist'},title:'Found Song',preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'};return Response.json(u.hostname==='itunes.apple.com'?{results:[]}:u.pathname==='/track/42'?track:{data:[track]});};
  const r=await (await s.call('/preview',{provider:'deezer',id:42,artist:'Forged',title:'Ignored'})).json();assert.equal(r.preview.link,'https://www.deezer.com/track/42');assert.deepEqual((await s.state()).songRatings,before.songRatings);assert.equal((await s.state()).revision,before.revision);s.sqlite.close();
 });
 
@@ -654,12 +654,12 @@ function savedDiscoveryFixture(s){
  }
  return state;
 }
-test('Saved discovery publishes 12 AI picks with no Apple, Deezer or Last.fm calls and valid descriptions',async()=>{
+test('Saved discovery publishes 12 picks, bounded catalog enrichment and valid descriptions',async()=>{
  const s=setup(),state=savedDiscoveryFixture(s);
  s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
  const result=await s.call('/refresh',{language:'Telugu'});assert.equal(result.status,200);const r=await result.json();
- assert.equal(r.batch.items.length,12);assert.equal(r.batch.selectionStats.engine,'Last.fm + MusicBrainz');
- assert.equal(r.batch.selectionStats.discovery.requests,0);assert.equal(s.calls().catalogCalls,0);
+ assert.equal(r.batch.items.length,12);assert.equal(r.batch.selectionStats.engine,'Last.fm + ListenBrainz + MusicBrainz');
+ assert.equal(r.batch.selectionStats.discovery.requests,0);assert(s.calls().catalogCalls<=12);
  assert(r.batch.items.every(t=>t.language==='Telugu'&&t.reason.includes('Last.fm')&&t.sourceUrl.startsWith('https://www.last.fm/')));
  assert(!JSON.stringify(r).includes('test-only'));assert(!JSON.stringify(r).includes('songDiscovery'));s.sqlite.close();
 });
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'discovery-audit-1');
- assert.equal(state.pendingSelectionStats.build,'discovery-audit-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'candidate-ranking-1');
+ assert.equal(state.pendingSelectionStats.build,'candidate-ranking-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -710,5 +710,33 @@ test('Deezer search result without audio falls through to a matched Apple previe
   return Response.json({results:[{trackId:99,artistName:'Found Artist',trackName:'Found Song',previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=99'}]});
  };
  const result=await (await s.call('/preview',{provider:'deezer',id:42})).json();
- assert.equal(result.preview.source,'iTunes');assert.equal(result.diagnostics.attempts.length,2);s.sqlite.close();
+ assert.equal(result.preview.source,'iTunes');assert.equal(result.diagnostics.attempts.length,1);s.sqlite.close();
+});
+test('AI quota failure publishes a full deterministic modern batch and preserves taste',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s),originalSeeds=state.seedSongs;
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));
+ let calls=0;s.env.AI.run=async()=>{calls++;throw Error('3036: quota exhausted');};
+ const r=await (await s.call('/refresh',{language:'Telugu'})).json();
+ assert.equal(r.batch.items.length,12);assert.equal(calls,1);assert.equal(r.batch.selectionStats.ai.fallbackReason,'quota');assert(r.batch.items.every(t=>t.rankingMode==='deterministic'&&!t.aiSong));
+ const stored=JSON.parse(s.sqlite.prepare('SELECT data FROM community').get().data);assert.deepEqual(stored.seedSongs,originalSeeds);assert.equal(stored.history.length,12);
+ await s.call('/state');await s.call('/feedback',{...r.batch.items[0],rating:'replay'});assert.equal(calls,1);s.sqlite.close();
+});
+test('Actual playback activity is idempotent, separate from ratings, and never calls AI',async()=>{
+ const s=setup();const body={...fixture,event:'play',eventId:'11111111-1111-4111-8111-111111111111'};
+ const before=await s.state();assert.equal((await s.call('/activity',body)).status,200);await s.call('/activity',body);
+ const row=s.sqlite.prepare('SELECT plays,completions,skips FROM song_activity').get();assert.equal(row.plays,1);assert.equal(row.completions,0);assert.equal(s.calls().aiCalls,0);
+ assert.deepEqual((await s.state()).songRatings,before.songRatings);
+ assert.equal((await s.call('/activity',{...body,title:'Fake',eventId:'22222222-2222-4222-8222-222222222222'})).status,400);s.sqlite.close();
+});
+test('Preview mappings cache without changing ratings, no-store is respected, and Apple precedes Deezer',async()=>{
+ const s=setup();let calls=0;s.env.CATALOG_FETCH=async url=>{calls++;assert.equal(new URL(url).hostname,'itunes.apple.com');return Response.json({results:[{trackId:42,artistName:fixture.artist,trackName:fixture.title,previewUrl:'https://audio-ssl.itunes.apple.com/clip.m4a',trackViewUrl:'https://music.apple.com/in/album/song/1?i=42'}]});};
+ assert.equal((await (await s.call('/preview',fixture)).json()).preview.source,'iTunes');
+ assert.equal((await (await s.call('/preview',fixture)).json()).diagnostics.cacheHit,true);assert.equal(calls,1);assert.equal(s.calls().aiCalls,0);
+ s.sqlite.exec('DELETE FROM song_resources');s.env.CATALOG_FETCH=async()=>Response.json({results:[]},{headers:{'cache-control':'no-store'}});
+ await s.call('/preview',fixture);assert.equal(s.sqlite.prepare('SELECT count(*) AS n FROM song_resources').get().n,0);s.sqlite.close();
+});
+test('Cover Art Archive is optional, uses a verified release identity, and caches metadata only',async()=>{
+ const {resolveResource}=await import('../backend/resources.mjs');const s=setup(),releaseId='11111111-1111-4111-8111-111111111111';let heads=0;
+ const r=await resolveResource(s.env.DB,{...fixture,releaseId},async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]}),{},async(u,o)=>{heads++;assert.equal(o.method,'HEAD');assert.equal(u,'https://coverartarchive.org/release/'+releaseId+'/front-250');return new Response(null,{status:307});});
+ assert.equal(r.artworkSource,'Cover Art Archive');assert.equal(r.preview,null);assert(r.youtube.includes('youtube.com/results'));assert.equal(heads,1);s.sqlite.close();
 });

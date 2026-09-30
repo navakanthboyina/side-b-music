@@ -9,11 +9,7 @@ let output=JSON.stringify({songs:[{artist:'Test Artist',title:'Test Song',langua
 const context={MODEL,messagesFor,parseSongs,candidateMessages,parseCandidatePicks,LEGACY_MODEL,isQuotaError,QUOTA_MESSAGE,clearModelDownloads:async()=>{},prebuiltAppConfig:{model_list:[]},self:{caches:{},postMessage:e=>events.push(e)},CreateMLCEngine:async()=>({chat:{completions:{create:async request=>{requests.push(request);if('response_format' in request)throw Error('Grammar matcher must not be invoked');return {choices:[{message:{content:outputs.length?outputs.shift():output}}]};}}}})};
 vm.runInNewContext(source,context);
 await context.self.onmessage({data:{profile}});
-assert.equal(requests.length,1);assert.equal(events.at(-1).type,'result');assert.equal(events.at(-1).songs[0].title,'Test Song');
-output='Not valid JSON';events=[];
-await context.self.onmessage({data:{profile}});
-assert.equal(events.at(-1).type,'error');assert.match(events.at(-1).text,/format/);assert(!events.some(e=>e.type==='result'));
-console.log('PASS: worker avoids grammar matcher, accepts validated song JSON, and rejects malformed output.');
+assert.equal(requests.length,0);assert.equal(events.at(-1).type,'error');assert.match(events.at(-1).text,/Verified candidates/);
 
 const cp={...profile,candidates:[{artist:'Test Artist',title:'Unseen One'},{artist:'Other Artist',title:'Unseen Two'}]};
 outputs=['{"songs":[]}','{"ids":[2]}'];events=[];const before=requests.length;

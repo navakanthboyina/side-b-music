@@ -7,7 +7,8 @@ const uuid=s=>typeof s==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}
 const norm=s=>String(s||'').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 const text=s=>typeof s==='string'&&s.trim()&&s.length<=300;
 const artistMatches=(value,credits)=>credits.some(c=>norm(c.name||c.artist?.name)===norm(value));
-export const discoveryEnabled=env=>!!env.LASTFM_API_KEY&&env.LASTFM_PUBLIC_APPROVED==='true';
+export const lastfmEnabled=env=>!!env.LASTFM_API_KEY&&env.LASTFM_PUBLIC_APPROVED==='true';
+export const discoveryEnabled=env=>lastfmEnabled(env)||env.LISTENBRAINZ_ENABLED!=='false';
 export function sourceLink(value){try{const u=new URL(value);return u.protocol==='https:'&&u.hostname==='www.last.fm'&&!u.username&&!u.password&&!u.port&&u.pathname.startsWith('/music/')?u.href:null;}catch{return null;}}
 export function workLanguages(work){return [...new Set([...(Array.isArray(work.languages)?work.languages:[]),work.language].map(c=>codes[c]).filter(Boolean))];}
 
@@ -16,10 +17,16 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  const keys=new WeakMap(),keyOf=t=>{let k=keys.get(t);if(k===undefined){k=songKey(t);keys.set(t,k);}return k;};
  if(!discoveryEnabled(env))throw Error('Song discovery needs a Last.fm key and public-use approval.');
  const cache=state.songDiscovery ||= {queries:{},languages:{},backoff:{},mbNext:0};
- cache.queries ||= {};cache.languages ||= {};cache.backoff ||= {};
+ cache.queries ||= {};cache.languages ||= {};cache.backoff ||= {};cache.secondary ||= {};cache.seedIds ||= {};cache.providerNext ||= {};cache.identities ||= {};
  stats.discovery ||= {requests:0,cacheHits:0,verifiedLanguage:0,unknownLanguage:0,errors:[]};
  const d=stats.discovery,transient={};
- const queries=()=>({...cache.queries,...transient});
+ const queries=()=>{
+  const merged={...cache.queries,...transient};
+  for(const [key,q] of Object.entries(cache.secondary))if(q.until>now()){
+   const primary=merged[key];merged[key]={until:Math.max(q.until,primary?.until||0),tracks:[...(primary?.until>now()?primary.tracks:[]),...q.tracks]};
+  }
+  return merged;
+ };
  const fetcher=env.DISCOVERY_FETCH||fetch;
  async function get(url,provider,redirects=0){
   if(d.requests>=24||now()+9000>deadline||cache.backoff[provider]>now())return null;
@@ -29,6 +36,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
    if(delay)await sleep(delay);
    cache.mbNext=now()+1100;
   }
+  if(provider!=='MusicBrainz'){const delay=Math.max(0,(cache.providerNext[provider]||0)-now());if(delay)await sleep(delay);cache.providerNext[provider]=now()+500;}
   d.requests++;
   d.requestsByProvider ||= {};d.requestsByProvider[provider]=(d.requestsByProvider[provider]||0)+1;
   try{
@@ -72,6 +80,10 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  const trimCache=()=>{
  for(const [key,q] of Object.entries(cache.queries))if(q.until<=now()||!active.has(key))delete cache.queries[key];
  cache.queries=Object.fromEntries(Object.entries(cache.queries).slice(-40));
+ for(const [key,q] of Object.entries(cache.secondary))if(q.until<=now()||!active.has(key))delete cache.secondary[key];
+ cache.secondary=Object.fromEntries(Object.entries(cache.secondary).slice(-40));
+ cache.seedIds=Object.fromEntries(Object.entries(cache.seedIds).filter(([,v])=>v.until>now()).slice(-100));
+ cache.identities=Object.fromEntries(Object.entries(cache.identities).filter(([,v])=>v.until>now()).slice(-400));
  cache.languages=Object.fromEntries(Object.entries(cache.languages).filter(([,v])=>v.until>now()).slice(-400));
  };
  const referenceCounts=new Map();
@@ -87,12 +99,12 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
    for(const t of q.tracks){
     if(denied(t)){audit.ratedOrExcluded++;continue;}
     if(seen.has(keyOf(t))){audit.duplicate++;continue;}
-    const info=cache.languages[keyOf(t)],labels=info?.until>now()?info.labels:[];
+    const info=cache.languages[keyOf(t)]||cache.identities[keyOf(t)],labels=info?.until>now()?(info.labels||[]):[];
     for(const l of labels.length?labels:['Unknown'])audit.languages[l]=(audit.languages[l]||0)+1;
     if(language!=='Mixed'&&!labels.some(l=>selectedLanguages(language).includes(l))){audit[labels.length?'otherLanguage':'unknownLanguage']++;continue;}
     let a=anchors.find(a=>keyOf(a)===key);
     if(!a){const ref=active.get(key);a={id:Math.max(0,...anchors.map(x=>x.id))+1,artist:ref.artist,title:ref.title,source:state.songRatings?.[key]?.value==='replay'?'liked song':'playlist song'};anchors.push(a);}
-    seen.add(keyOf(t));rows.push({...t,anchorIds:[a.id],evidence:{type:'similar_track',provider:'Last.fm',candidateId:t.id,reference:{artist:a.artist,title:a.title},match:t.match,url:t.url,languages:labels,recordingId:info?.recordingId}});
+    seen.add(keyOf(t));rows.push({...t,anchorIds:[a.id],evidence:{type:'similar_track',provider:t.provider||'Last.fm',candidateId:t.id,reference:{artist:a.artist,title:a.title},match:t.match,url:t.url,languages:labels,recordingId:info?.recordingId||(t.provider==='ListenBrainz'?t.mbid:undefined),releaseId:info?.releaseId||t.releaseId,artistIds:info?.artistIds||t.artistIds}});
    }
   }
   audit.eligibleBeforePoolLimit=rows.length;d.eligibility=audit;
@@ -101,21 +113,56 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
   const out=[];while(out.length<24&&[...buckets.values()].some(a=>a.length))for(const list of buckets.values()){if(list.length&&out.length<24)out.push(list.shift());}return out;
  };
  let rows=available();
- if(rows.length>=24){d.cacheHits+=rows.length;trimCache();return rows;}
- for(const a of anchors.filter(a=>!cappedReferences.has(keyOf(a))).slice(0,6)){
+ if(rows.length>=24&&(language!=='Mixed'||enrichLanguage||(d.identityChecks||0)>=2)){d.cacheHits+=rows.length;trimCache();return rows;}
+ for(const a of (lastfmEnabled(env)?anchors:[]).filter(a=>!cappedReferences.has(keyOf(a))).slice(0,6)){
   const key=keyOf(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
   const u=new URL('https://ws.audioscrobbler.com/2.0/');
   u.search=new URLSearchParams({method:'track.getsimilar',artist:a.artist,track:a.title,autocorrect:'0',limit:'30',format:'json',api_key:env.LASTFM_API_KEY});
   const response=await get(u.href,'Last.fm');if(!response)continue;
   const raw=response.body.similartracks?.track;
   if(!Array.isArray(raw)){d.errors.push({provider:'Last.fm',category:'invalid_shape'});continue;}
-  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number.isFinite(Number(t.match))&&Number(t.match)>0).map(t=>({artist:t.artist.name.trim(),title:t.name.trim(),id:keyOf({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
+  const tracks=raw.filter(t=>text(t.name)&&text(t.artist?.name)&&Number.isFinite(Number(t.match))&&Number(t.match)>0).map(t=>({provider:'Last.fm',artist:t.artist.name.trim(),title:t.name.trim(),id:keyOf({artist:t.artist.name.trim(),title:t.name.trim()}),match:Number(t.match),mbid:uuid(t.mbid)?t.mbid:null,url:sourceLink(t.url)||'https://www.last.fm/music/'+encodeURIComponent(t.artist.name.trim())+'/_/'+encodeURIComponent(t.name.trim())}));
   // Responses that prohibit reuse can serve this request, but never enter the source cache.
   if(response.ttl>0)cache.queries[key]={until:now()+response.ttl,tracks};
   else transient[key]={until:deadline+1,tracks};
  }
+ // ListenBrainz is optional and fails independently of Last.fm. Its public dataset API
+ // requires MusicBrainz recording IDs; exact title/credit matching resolves only unambiguous seeds.
+ if(env.LISTENBRAINZ_ENABLED!=='false')for(const a of anchors.filter(a=>!cappedReferences.has(keyOf(a))).slice(0,2)){
+  const key=keyOf(a);if(cache.secondary[key]?.until>now()){d.cacheHits++;continue;}
+  let id=cache.seedIds[key]?.until>now()?cache.seedIds[key].id:null;
+  if(!id&&!(cache.seedIds[key]?.until>now())){
+   const quote=x=>'"'+x.replace(/[\\"]/g,'\\$&')+'"';
+   const q=new URLSearchParams({query:'recording:'+quote(a.title)+' AND artist:'+quote(a.artist),fmt:'json',limit:'5'});
+   const found=await get('https://musicbrainz.org/ws/2/recording?'+q,'MusicBrainz');
+   if(found){const matches=(Array.isArray(found.body.recordings)?found.body.recordings:[]).filter(r=>uuid(r.id)&&norm(r.title)===norm(a.title)&&artistMatches(a.artist,r['artist-credit']||[]));
+    id=matches.length===1?matches[0].id:null;cache.seedIds[key]={id,until:now()+(id?30*DAY:DAY)};}
+  }
+  if(!id){d.unresolvedSeeds=(d.unresolvedSeeds||0)+1;continue;}
+  const algorithm=env.LISTENBRAINZ_ALGORITHM||'session_based_days_7500_session_300_contribution_5_threshold_15_limit_50_skip_30_top_n_listeners_1000';
+  const response=await get('https://labs.api.listenbrainz.org/similar-recordings/json?'+new URLSearchParams({recording_mbids:id,algorithm}),'ListenBrainz');
+  if(!response)continue;
+  if(!Array.isArray(response.body)){d.errors.push({provider:'ListenBrainz',category:'invalid_shape'});continue;}
+  const raw=response.body.filter(t=>uuid(t.recording_mbid)&&t.reference_mbid===id&&t.recording_mbid!==id&&text(t.recording_name)&&text(t.artist_credit_name)&&Number.isFinite(Number(t.score))&&Number(t.score)>0).slice(0,30);
+  const top=Math.max(1,...raw.map(t=>Number(t.score)));
+  const tracks=raw.map(t=>({provider:'ListenBrainz',artist:t.artist_credit_name,title:t.recording_name,id:keyOf({artist:t.artist_credit_name,title:t.recording_name}),match:Number(t.score)/top,mbid:t.recording_mbid,
+   releaseId:uuid(t.release_mbid)?t.release_mbid:null,artistIds:(Array.isArray(t['[artist_credit_mbids]']||t.artist_credit_mbids)?(t['[artist_credit_mbids]']||t.artist_credit_mbids):[]).filter(uuid),url:'https://listenbrainz.org/'}));
+  d.listenBrainzResults=(d.listenBrainzResults||0)+tracks.length;
+  if(response.ttl>0)cache.secondary[key]={until:now()+response.ttl,tracks};
+  else transient[key]={until:deadline+1,tracks:[...(queries()[key]?.tracks||[]),...tracks]};
+ }
  // Mixed ranking does not require language labels. Enrich separately during daily warming.
- if(language==='Mixed'&&!enrichLanguage){rows=available();d.eligible=rows.length;trimCache();return rows;}
+ if(language==='Mixed'&&!enrichLanguage){
+  // Identity lookup is best-effort for Mixed, never a playback or recommendation dependency.
+  for(const t of available()){
+   if((d.identityChecks||0)>=2)break;
+   if(!uuid(t.mbid)||cache.identities[keyOf(t)]?.until>now()||cache.languages[keyOf(t)]?.recordingId)continue;
+   d.identityChecks=(d.identityChecks||0)+1;
+   const r=await get('https://musicbrainz.org/ws/2/recording/'+t.mbid+'?inc=artist-credits+releases&fmt=json','MusicBrainz');
+   if(r&&uuid(r.body.id)&&norm(r.body.title)===norm(t.title)&&artistMatches(t.artist,r.body['artist-credit']||[]))cache.identities[keyOf(t)]={recordingId:r.body.id,artistIds:(r.body['artist-credit']||[]).map(c=>c.artist?.id).filter(uuid),releaseId:(r.body.releases||[]).find(r=>uuid(r.id))?.id,until:now()+30*DAY};
+  }
+  rows=available();d.eligible=rows.length;trimCache();return rows;
+ }
  // Resolve recordings, then their performed works. Release text-language is never a song label.
  // Only enrich tracks that could enter this batch, fairly across taste references.
  // Previously this scanned capped/inactive references and exhausted the metadata budget.
@@ -129,7 +176,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
   const key=keyOf(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
   if(d.requests>=24||now()+9000>deadline)break;
   const missing=()=>{cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;};
-  const lookup=id=>get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits&fmt=json`,'MusicBrainz');
+  const lookup=id=>get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits+releases&fmt=json`,'MusicBrainz');
   let id=t.mbid,rec=id?await lookup(id):null;
   if(id&&!rec)continue; // An outage must not be cached as a metadata miss.
   if(!id||rec?.notFound){
@@ -152,7 +199,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
   if(works.length>3){cache.languages[key]={labels:[],until:now()+DAY};continue;}
   for(const work of works){const result=await get(`https://musicbrainz.org/ws/2/work/${work}?fmt=json`,'MusicBrainz');if(result?.notFound){missingWork=true;}else if(result&&uuid(result.body.id))labels.push(...workLanguages(result.body));else complete=false;}
   if(missingWork){missing();continue;}
-  if(complete){cache.languages[key]={recordingId:id,labels:[...new Set(labels)],until:now()+(labels.length?30*DAY:DAY)};if(labels.length)d.verifiedLanguage++;else d.unknownLanguage++;}
+  if(complete){cache.languages[key]={recordingId:id,artistIds:(rec.body['artist-credit']||[]).map(c=>c.artist?.id).filter(uuid),releaseId:(rec.body.releases||[]).find(r=>uuid(r.id))?.id,labels:[...new Set(labels)],until:now()+(labels.length?30*DAY:DAY)};if(labels.length)d.verifiedLanguage++;else d.unknownLanguage++;}
  }
  trimCache();
  d.errors=d.errors.slice(-12);

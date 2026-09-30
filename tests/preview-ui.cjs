@@ -19,3 +19,15 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  assert.equal(p.panel.querySelector('.player-source img').alt,'Download on iTunes');assert(p.panel.querySelector('.player-fallback').href.startsWith('https://www.youtube.com/results?'));
  dom.window.close();console.log('PASS: preview events, one-player switching, stale lookups and closing while loading.');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+(async()=>{
+ const {installPreviewPlayer}=await import('../preview-player.mjs');
+ const dom=new JSDOM('<button data-preview data-title="Song" data-artist="Singer">Preview</button>'),w=dom.window,d=w.document,events=[];
+ w.HTMLMediaElement.prototype.play=function(){this.dispatchEvent(new w.Event('playing'));return Promise.resolve();};w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};
+ const p=installPreviewPlayer(d,w,async()=>({preview:{url:'https://audio-ssl.itunes.apple.com/clip.m4a',link:'https://music.apple.com/in/album/a/1?i=2'}}),e=>events.push(e));
+ assert.equal(events.length,0);d.querySelector('button').click();await new Promise(r=>setImmediate(r));
+ assert.equal(events.filter(e=>e.event==='play').length,1);p.audio.dispatchEvent(new w.Event('playing'));assert.equal(events.length,1);
+ p.audio.currentTime=16;p.audio.dispatchEvent(new w.Event('timeupdate'));p.audio.dispatchEvent(new w.Event('timeupdate'));
+ assert.equal(events.filter(e=>e.event==='complete').length,1);assert(events.every(e=>e.artist==='Singer'&&e.eventId));
+ dom.window.close();console.log('PASS: actual playback events are emitted once; lookup alone is not a listen.');
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -8,7 +8,7 @@ const anchor={id:1,artist:'Starting Singer',title:'Starting Song',source:'liked 
 function fixture(){
  let clock=100000,calls=[];
  const state={seedSongs:[anchor],songRatings:{},familiar:{}};
- const env={LASTFM_API_KEY:'never-log-this',LASTFM_PUBLIC_APPROVED:'true',DISCOVERY_FETCH:async(url,options)=>{
+ const env={LISTENBRAINZ_ENABLED:'false',LASTFM_API_KEY:'never-log-this',LASTFM_PUBLIC_APPROVED:'true',DISCOVERY_FETCH:async(url,options)=>{
   calls.push({url,options,at:clock});const u=new URL(url);
   if(u.hostname==='ws.audioscrobbler.com')return Response.json({similartracks:{track:[{name:'Discovery',artist:{name:'Other Singer'},mbid:recording,match:'0.9',url:'https://www.last.fm/music/Other+Singer/_/Discovery'}]}});
   if(u.pathname.includes('/recording/'))return Response.json({id:recording,title:'Discovery','artist-credit':[{name:'Other Singer'}],relations:[{type:'performance',work:{id:work}}]});
@@ -43,7 +43,7 @@ test('Release language, artist nationality, and model language cannot turn unkno
 test('Every supported language uses lyrics codes; no free-text or release shortcut',()=>{
  assert.deepEqual(workLanguages({languages:['tel','hin','eng','tam','kan','mal','pan','ben','zxx']}),['Telugu','Hindi','English','Tamil','Kannada','Malayalam','Punjabi','Bengali']);
  assert.equal(sourceLink('https://www.last.fm.evil.test/music/a'),null);assert.equal(sourceLink('javascript:alert(1)'),null);
- assert.equal(discoveryEnabled({LASTFM_API_KEY:'key'}),false);
+ assert.equal(discoveryEnabled({LASTFM_API_KEY:'key',LISTENBRAINZ_ENABLED:'false'}),false);
 });
 test('Wrong recording identity and HTTP no-store never enter a verified pool',async()=>{
  const f=fixture();const orig=f.env.DISCOVERY_FETCH;
@@ -143,8 +143,8 @@ test('Cached pools cap reference concentration and skip references already filli
 test('Mixed discovery rotates queried anchors and does not spend its budget on language lookup',async()=>{
  const f=fixture(),usedSources=new Set(),stats={};
  const songs=await discoverSongs(f.state,f.env,{...f.options,language:'Mixed',usedSources,stats});
- assert.equal(songs.length,1);assert.equal(stats.discovery.requests,1);assert(usedSources.has(songKey(anchor)));
- assert(f.calls.every(c=>new URL(c.url).hostname==='ws.audioscrobbler.com'));
+ assert.equal(songs.length,1);assert.equal(stats.discovery.requests,2);assert(usedSources.has(songKey(anchor)));
+ assert(!f.calls.some(c=>new URL(c.url).pathname.includes('/work/')));
 });
 test('Language enrichment skips capped references before spending metadata requests',async()=>{
  const f=fixture(),capped={artist:'Capped Singer',title:'Capped Reference'};
@@ -161,4 +161,20 @@ test('Verified language outside the requested mix is diagnosed, not silently app
  const stats={};const rows=await discoverSongs(f.state,f.env,{...f.options,language:'Telugu + Hindi + English',stats});
  assert.equal(rows.length,0);assert.equal(stats.discovery.verifiedLanguage,1);
  assert.equal(stats.discovery.eligibility.otherLanguage,1);assert.equal(stats.discovery.eligibility.languages.Punjabi,1);
+});
+test('ListenBrainz adds real secondary matches when Last.fm is unavailable, using exact MB seed identity',async()=>{
+ const f=fixture(),seedId='33333333-3333-4333-8333-333333333333',original=f.env.DISCOVERY_FETCH;
+ delete f.env.LASTFM_API_KEY;f.env.LISTENBRAINZ_ENABLED='true';
+ f.env.DISCOVERY_FETCH=async(u,o)=>{
+  const url=new URL(u);f.calls.push({url:u,options:o});
+  if(url.hostname==='labs.api.listenbrainz.org'){
+   assert.equal(url.searchParams.get('recording_mbids'),seedId);
+   return Response.json([{recording_mbid:recording,reference_mbid:seedId,recording_name:'Discovery',artist_credit_name:'Other Singer',score:120},{recording_mbid:work,reference_mbid:recording,recording_name:'Wrong reference',artist_credit_name:'Other',score:150}]);
+  }
+  if(url.pathname==='/ws/2/recording')return Response.json({recordings:[{id:seedId,title:anchor.title,'artist-credit':[{name:anchor.artist}]}]});
+  return original(u,o);
+ };
+ const stats={},rows=await discoverSongs(f.state,f.env,{...f.options,stats});
+ assert.equal(rows.length,1);assert.equal(rows[0].evidence.provider,'ListenBrainz');assert.deepEqual(rows[0].evidence.languages,['Telugu','Hindi']);assert.equal(stats.discovery.listenBrainzResults,1);
+ assert(!f.calls.some(c=>c.url.includes('audioscrobbler')));
 });
