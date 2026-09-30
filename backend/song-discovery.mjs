@@ -37,6 +37,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
   // Preserve metadata capacity across every pool in this refresh, not just one call.
   if(provider==='Last.fm'&&(d.requestsByProvider?.[provider]||0)>=6)return null;
   if(provider==='ListenBrainz'&&(d.requestsByProvider?.[provider]||0)>=2)return null;
+  if(provider==='MusicBrainz'&&(language!=='Mixed'||enrichLanguage)&&(d.requestsByProvider?.MusicBrainz||0)>=18)return null;
   if(provider==='MusicBrainz'){
    const delay=Math.max(0,(cache.mbNext||0)-now());
    if(now()+delay+9000>deadline)return null;
@@ -127,8 +128,8 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
   .flatMap(([,v])=>v.tracks).filter(t=>!denied(t)&&!(cache.languages[keyOf(t)]?.until>now()));
  // Drain saved candidates before purchasing more metadata work with external requests.
  const backlogFirst=needsLanguage&&backlog().length>=12&&!(cache.backoff.MusicBrainz>now());
- d.scheduling={mode:backlogFirst?'enrich_saved_candidates':'discover_then_enrich',backlogBefore:backlog().length,lastfmRequestLimit:6,metadataPaused:cache.backoff.MusicBrainz>now()};
- for(const a of (lastfmEnabled(env)&&!backlogFirst?anchors:[]).filter(a=>!cappedReferences.has(keyOf(a))).slice(0,6)){
+ d.scheduling={mode:backlogFirst?'balanced_discovery_and_metadata':'discover_then_enrich',backlogBefore:backlog().length,lastfmRequestLimit:6,metadataRequestLimit:needsLanguage?18:24,metadataPaused:cache.backoff.MusicBrainz>now()};
+ for(const a of (lastfmEnabled(env)?anchors:[]).filter(a=>!cappedReferences.has(keyOf(a))).sort((a,b)=>Number(cache.queries[keyOf(a)]?.until>now())-Number(cache.queries[keyOf(b)]?.until>now())).slice(0,6)){
   const key=keyOf(a);usedSources.add(key);if(cache.queries[key]?.until>now()){d.cacheHits++;continue;}
   const u=new URL('https://ws.audioscrobbler.com/2.0/');
   u.search=new URLSearchParams({method:'track.getsimilar',artist:a.artist,track:a.title,autocorrect:'0',limit:'30',format:'json',api_key:env.LASTFM_API_KEY});
@@ -188,7 +189,7 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  const visited=new Set();
  for(const t of candidates){
   const key=keyOf(t);if(visited.has(key)||cache.languages[key]?.until>now())continue;visited.add(key);
-  if(d.requests>=24||now()+9000>deadline||cache.backoff.MusicBrainz>now())break;
+  if(d.requests>=24||(d.requestsByProvider?.MusicBrainz||0)>=18||now()+9000>deadline||cache.backoff.MusicBrainz>now())break;
   const missing=()=>{cache.languages[key]={labels:[],until:now()+DAY};d.unknownLanguage++;};
   const lookup=id=>get(`https://musicbrainz.org/ws/2/recording/${id}?inc=work-rels+artist-credits+releases&fmt=json`,'MusicBrainz');
   let id=t.mbid,rec=id?await lookup(id):null;
@@ -217,5 +218,5 @@ export async function discoverSongs(state,env,{anchors,excluded=new Set(),usedSo
  }
  trimCache();
  d.errors=d.errors.slice(-12);
- rows=available();d.eligible=rows.length;d.stopReason=cache.backoff.MusicBrainz>now()?'metadata_provider_cooldown':d.requests>=24?'request_budget':now()+9000>deadline?'deadline':'available_metadata_checked';return rows;
+ rows=available();d.eligible=rows.length;d.stopReason=cache.backoff.MusicBrainz>now()?'metadata_provider_cooldown':d.requests>=24?'request_budget':(d.requestsByProvider?.MusicBrainz||0)>=18?'metadata_budget':now()+9000>deadline?'deadline':'available_metadata_checked';return rows;
 }

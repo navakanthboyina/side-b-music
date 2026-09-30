@@ -67,3 +67,9 @@ test('Catalog cooldown records the originating HTTP status and time across reque
  await get('https://itunes.apple.com/search');const r=await get('https://itunes.apple.com/search');
  assert.equal(r.headers.get('x-munna-original-status'),'503');assert.equal(r.headers.get('x-munna-failure-at'),String(now));assert.equal(r.headers.get('retry-after'),'300');DB.sqlite.close();
 });
+test('Cached preview logs separate historical failures from current provider calls',async()=>{
+ const DB=db(),song={artist:'Singer',title:'Track'},saved={artist:'Singer',title:'Track',preview:{source:'Deezer',url:'https://cdn-preview-a.dzcdn.net/test.mp3',link:'https://www.deezer.com/track/1'},diagnostics:{attempts:[{provider:'iTunes',status:429,outcome:'http_error'}]}};
+ const {songKey}=await import('../ai-core.mjs');DB.sqlite.prepare('INSERT INTO song_resources VALUES(?,?,?)').run(songKey(song),JSON.stringify(saved),Date.now()+60000);
+ const stats={};await resolveResource(DB,song,async()=>{throw Error('must not fetch');},stats);
+ assert.deepEqual(stats.attempts,[]);assert.equal(stats.historicalAttempts[0].status,429);assert.equal(stats.cachedAt,null);DB.sqlite.close();
+});

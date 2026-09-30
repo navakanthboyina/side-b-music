@@ -59,3 +59,13 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  d.querySelector('button').click();await new Promise(r=>setImmediate(r));assert.match(d.querySelector('.track-art img').src,/cdn-images.dzcdn.net/);
  dom.window.close();console.log('PASS: preview lookup restores matched Deezer artwork on the song card.');
 })().catch(e=>{console.error(e);process.exitCode=1});
+(async()=>{
+ const {installPreviewPlayer}=await import('../preview-player.mjs');
+ const dom=new JSDOM('<button data-preview data-title="Song" data-artist="Singer">Preview</button>'),w=dom.window,d=w.document;
+ w.HTMLMediaElement.prototype.pause=function(){this.dispatchEvent(new w.Event('pause'));};w.HTMLMediaElement.prototype.load=function(){};w.HTMLMediaElement.prototype.play=async function(){this.dispatchEvent(new w.Event('playing'));};
+ const p=installPreviewPlayer(d,w,async()=>({preview:{url:'https://cdn-preview-a.dzcdn.net/clip.mp3',link:'https://www.deezer.com/track/1'},diagnostics:{cacheHit:true,historicalAttempts:[{provider:'iTunes',outcome:'http_error',status:429,limitSource:'provider_cooldown'}]}}));
+ d.querySelector('button').click();await new Promise(r=>setImmediate(r));assert(!p.panel.textContent.includes('Apple:'));assert.match(p.panel.textContent,/saved preview/);
+ p.audio.pause();assert.match(p.panel.textContent,/Playback paused · press ▶ to resume/);
+ Object.defineProperty(p.audio,'error',{value:{code:2}});p.audio.dispatchEvent(new w.Event('error'));p.audio.pause();assert.match(p.panel.textContent,/audio network request failed/);
+ dom.window.close();console.log('PASS: cached Apple warnings do not obscure a working Deezer preview; playback failure survives pause events.');
+})().catch(e=>{console.error(e);process.exitCode=1});

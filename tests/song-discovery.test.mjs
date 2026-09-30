@@ -184,7 +184,7 @@ test('Large unknown-language backlog gets metadata budget before fetching more L
  f.env.LISTENBRAINZ_ENABLED='true';
  f.env.DISCOVERY_FETCH=async url=>{f.calls.push(url);assert.equal(new URL(url).hostname,'musicbrainz.org');return Response.json({recordings:[]});};
  await discoverSongs(f.state,f.env,{...f.options,stats});
- assert.equal(stats.discovery.scheduling.mode,'enrich_saved_candidates');assert.equal(stats.discovery.requestsByProvider['Last.fm'],undefined);assert.equal(stats.discovery.requestsByProvider.MusicBrainz,16);
+ assert.equal(stats.discovery.scheduling.mode,'balanced_discovery_and_metadata');assert.equal(stats.discovery.requestsByProvider['Last.fm'],undefined);assert.equal(stats.discovery.requestsByProvider.MusicBrainz,16);
  assert.equal(stats.discovery.unknownLanguage,16);
 });
 test('Last.fm cap applies to entire multi-pool refresh, preserving enrichment capacity',async()=>{
@@ -203,4 +203,11 @@ test('MusicBrainz HTML 503 preserves its cause, honors Retry-After and recovers 
  const second={};await discoverSongs(f.state,f.env,{...f.options,stats:second});
  assert.equal(second.discovery.providerCooldowns[0].cause.status,503);assert.equal(second.discovery.requests,0);assert(!JSON.stringify(second).includes('never-log-this'));
  await f.options.sleep(600001);const third={};const rows=await discoverSongs(f.state,f.env,{...f.options,deadline:900000,stats:third});assert.equal(rows.length,1);assert.equal(third.discovery.providerCooldowns.length,0);
+});
+test('Language backlog cannot starve new Last.fm seeds or consume every request',async()=>{
+ const f=fixture(),stats={},fresh={...anchor,id:2,title:'Fresh Seed'};f.state.seedSongs.push(fresh);f.options.anchors.push(fresh);
+ f.state.songDiscovery={queries:{[songKey(anchor)]:{until:999999,tracks:Array.from({length:30},(_,i)=>({artist:'Other Singer',title:'Discovery '+i,id:'t'+i,match:.9,mbid:null}))}},languages:{},backoff:{}};
+ f.env.DISCOVERY_FETCH=async url=>new URL(url).hostname==='ws.audioscrobbler.com'?Response.json({similartracks:{track:[]}}):Response.json({recordings:[]});
+ await discoverSongs(f.state,f.env,{...f.options,stats});
+ assert.equal(stats.discovery.requestsByProvider['Last.fm'],1);assert.equal(stats.discovery.requestsByProvider.MusicBrainz,18);assert.equal(stats.discovery.stopReason,'metadata_budget');assert.equal(stats.discovery.requests,19);
 });

@@ -8,8 +8,8 @@ export async function getResource(db,song,now=Date.now()){
 }
 export async function resolveResource(db,song,fetchCatalog,stats={},fetchArtwork=fetch){
  const cached=await getResource(db,song);
- if(cached&&!(cached.preview===null&&cached.diagnostics?.attempts?.some(a=>a.outcome==='request_failed'||a.outcome==='lookup_budget'))){stats.cacheHit=true;stats.attempts=cached.diagnostics?.attempts||[];stats.selectedProvider=cached.preview?.source;return cached;}
- const resource={artist:song.artist,title:song.title,preview:null,diagnostics:stats};
+ if(cached&&!(cached.preview===null&&cached.diagnostics?.attempts?.some(a=>a.outcome==='request_failed'||a.outcome==='lookup_budget'))){stats.cacheHit=true;stats.attempts=[];stats.historicalAttempts=cached.diagnostics?.attempts||[];stats.cachedAt=cached.resolvedAt||null;stats.selectedProvider=cached.preview?.source;return cached;}
+ const resource={resolvedAt:Date.now(),artist:song.artist,title:song.title,preview:null,diagnostics:stats};
  resource.preview=await findPreview(song,fetchCatalog,stats,resource);
  const releaseId=song.releaseId||song.evidence?.releaseId;
  if(!resource.artwork&&uuid(releaseId)){

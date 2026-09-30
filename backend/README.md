@@ -114,3 +114,9 @@ Build `provider-causes-1` uses Deezer first for song preview searches, Apple (IN
 `npm run diagnose` reports `discovery.providerCooldowns`: provider, original failure category/status/time, expiry and retry seconds. Legacy pauses whose cause was not saved explicitly report `unknown_legacy_cooldown`. MusicBrainz HTML error responses now honor Retry-After too. During MusicBrainz backoff, Last.fm discovery can continue instead of being suppressed by a metadata backlog. This does not infer missing song languages: strict language discovery may still wait for metadata recovery. Mixed and explicitly enabled familiar-song fallback remain available.
 
 Preview cooldown attempts include `originalStatus` and `failureAt` for new Apple/Deezer pauses, alongside `limitSource` and `retryAfterSeconds`. Internal `lookup_budget`, failed network requests and upstream HTTP errors remain distinct. No API credentials, query URLs or provider response bodies are included.
+
+### Balanced discovery and cached preview reporting
+
+Build `balanced-discovery-1` permits fresh Last.fm seed queries even with a language-enrichment backlog. Known uncached seed queries take priority; Last.fm remains capped at six calls and language enrichment at 18 MusicBrainz calls, within the overall 24-request budget. `metadata_budget` identifies that limit separately. Missing language evidence remains unknown; this change does not guarantee every selected language has enough qualifying songs.
+
+Cached previews report no current `attempts`; prior attempts appear in `historicalAttempts` with `cachedAt` (null for old cache entries). The player shows the working provider without old Apple cooldown warnings. “Playback paused” explicitly offers resume, while actual audio failures remain visible even if a pause event follows.

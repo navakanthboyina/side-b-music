@@ -4,16 +4,16 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
  panel.innerHTML='<div class="player-vinyl" aria-hidden="true"><span>MG</span></div><div class="player-info"><strong class="player-title"></strong><span class="player-artist"></span><p class="player-status" role="status"></p><span class="player-attribution"></span><a class="player-source" target="_blank" rel="noopener noreferrer" hidden></a><a class="player-fallback" hidden target="_blank" rel="noopener noreferrer">Find on YouTube ↗</a></div><audio controls preload="none" aria-label="30-second song preview"></audio><button class="player-close" aria-label="Close preview">×</button>';
  doc.body.append(panel);
  const audio=panel.querySelector('audio'),status=panel.querySelector('.player-status'),source=panel.querySelector('.player-source'),attribution=panel.querySelector('.player-attribution'),fallback=panel.querySelector('.player-fallback');
- let ticket=0,provider='Deezer',currentSong=null,started=false,completed=false;
+ let ticket=0,provider='Deezer',currentSong=null,started=false,completed=false,playbackError=false;
  const activity=event=>{if(currentSong)Promise.resolve(onActivity({...currentSong,event,eventId:win.crypto.randomUUID()})).catch(()=>{});};
  const spinning=on=>panel.classList.toggle('is-playing',on);
- const stop=()=>{if(started&&!completed&&audio.currentTime<10)activity('skip');currentSong=null;started=false;completed=false;audio.pause();audio.removeAttribute('src');audio.load();spinning(false);};
- audio.addEventListener('playing',()=>{if(!started){started=true;activity('play');}spinning(true);status.textContent='Playing · '+provider+' preview';});
- audio.addEventListener('pause',()=>{spinning(false);if(audio.getAttribute('src'))status.textContent='Paused · '+provider+' preview';});
+ const stop=()=>{if(started&&!completed&&audio.currentTime<10)activity('skip');currentSong=null;started=false;completed=false;playbackError=false;audio.pause();audio.removeAttribute('src');audio.load();spinning(false);};
+ audio.addEventListener('playing',()=>{playbackError=false;if(!started){started=true;activity('play');}spinning(true);status.textContent='Playing · '+provider+' preview';});
+ audio.addEventListener('pause',()=>{spinning(false);if(audio.getAttribute('src')&&!playbackError)status.textContent='Playback paused · press ▶ to resume '+provider+' preview';});
  audio.addEventListener('waiting',()=>{spinning(false);status.textContent='Buffering preview…';});
  audio.addEventListener('ended',()=>{spinning(false);status.textContent='Preview finished. Open the song link for more.';});
  const playbackFailed=error=>{
-  spinning(false);
+  playbackError=true;spinning(false);
   const code=audio.error?.code;
   const detail=({1:'playback interrupted',2:'audio network request failed',3:'audio decoding failed',4:'audio format or URL unavailable'})[code]||
    (error?.name==='NotSupportedError'?'audio format or URL unavailable':'audio playback failed');
@@ -31,8 +31,8 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
   try{
    const {preview,diagnostics,artwork}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
    if(artwork){try{const a=new URL(artwork);if(a.protocol==='https:'&&!a.username&&!a.password&&!a.port&&(/^(?:[a-z0-9-]+\.)+mzstatic\.com$/.test(a.hostname)||['cdn-images.dzcdn.net','coverartarchive.org'].includes(a.hostname))){const art=button.closest('.music-card')?.querySelector('.track-art');if(art){let img=art.querySelector('img');if(!img){img=doc.createElement('img');img.className='catalog-art';img.alt='';img.style.cssText='width:100%;height:100%;object-fit:cover';art.prepend(img);}img.src=a.href;img.addEventListener('error',()=>img.remove(),{once:true});}}}catch{}}
-   const attempts=diagnostics?.attempts||[];const appleAttempt=attempts.find(a=>a.provider==='iTunes'&&a.outcome!=='found');
-   if(!preview){fallback.hidden=false;status.textContent=attempts.some(a=>['http_error','timeout','request_failed','invalid_response','lookup_budget'].includes(a.outcome))?'Preview lookup is temporarily unavailable from one or more providers. Try later or find the song on YouTube.':'No matching preview available. Find the song on YouTube.';attribution.textContent=attempts.map(a=>(a.provider==='iTunes'?'Apple':a.provider)+': '+(a.limitSource==='room_budget'?'shared lookup limit reached':a.limitSource==='provider_cooldown'?'temporarily paused after provider error':a.outcome.replaceAll('_',' ')+(a.status&&a.status!==200?' (HTTP '+a.status+')':''))).join(' · ');return;}
+   const attempts=diagnostics?.cacheHit?(diagnostics.historicalAttempts||[]):(diagnostics?.attempts||[]);
+   if(!preview){fallback.hidden=false;status.textContent=attempts.some(a=>['http_error','timeout','request_failed','invalid_response','lookup_budget'].includes(a.outcome))?'Preview lookup is temporarily unavailable from one or more providers. Try later or find the song on YouTube.':'No matching preview available. Find the song on YouTube.';attribution.textContent=(diagnostics?.cacheHit?'Previous lookup (cached): ':'')+attempts.map(a=>(a.provider==='iTunes'?'Apple':a.provider)+': '+(a.limitSource==='room_budget'?'shared lookup limit reached':a.limitSource==='provider_cooldown'?'temporarily paused after provider error':a.outcome.replaceAll('_',' ')+(a.status&&a.status!==200?' (HTTP '+a.status+')':''))).join(' · ');return;}
    const u=new URL(preview.url),link=new URL(preview.link);
    const clean=x=>x.protocol==='https:'&&!x.username&&!x.password&&!x.port;
    const apple=/^(?:[a-z0-9-]+\.)*(?:itunes\.apple\.com|mzstatic\.com)$/.test(u.hostname)&&['music.apple.com','itunes.apple.com'].includes(link.hostname);
@@ -42,7 +42,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
    if(apple){
     attribution.textContent='Preview provided courtesy of iTunes';
     const badge=doc.createElement('img');badge.src='https://tools.applemediaservices.com/api/badges/download-on-itunes/badge/en-us?size=250x83';badge.alt='Download on iTunes';badge.width=120;badge.height=40;source.append(badge);
-   }else {source.textContent='Listen on Deezer ↗';if(appleAttempt)attribution.textContent='Apple: '+(appleAttempt.limitSource==='room_budget'?'shared lookup limit reached':appleAttempt.limitSource==='provider_cooldown'?'temporarily paused after provider error':appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':''))+' · using Deezer';}
+   }else {source.textContent='Listen on Deezer ↗';attribution.textContent='Preview from Deezer'+(diagnostics?.cacheHit?' · saved preview':'');}
    audio.src=u.href;status.textContent='Ready · press play for a 30-second preview';
    try{await audio.play();}catch(error){if(mine===ticket){if(error?.name==='NotAllowedError')status.textContent='Ready · press play to start the preview';else if(error?.name!=='AbortError')playbackFailed(error);}}
   }catch{if(mine===ticket){fallback.hidden=false;status.textContent='Preview unavailable. Please try again or find the song on YouTube.';}}
