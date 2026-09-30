@@ -101,3 +101,8 @@ test('Invalid AI replies expose safe validation reasons and accurate fallback wo
   assert.equal(stats.ai.attempts[0].validationReason,reason);assert.match(rankingStatus(stats.ai),/reply failed validation/);assert(!rankingStatus(stats.ai).includes('unavailable'));
  }
 });
+test('AI sees only the valid diverse batch, never extra candidates that can violate selection caps',async()=>{
+ const picks=[track(1),track(2)],stats={};
+ const out=await rerankBatch(picks,{AI:{run:async(_,input)=>{const data=JSON.parse(input.messages[1].content);assert.equal(data.candidates.length,2);return {response:'{"ids":[2,1]}'};}}},stats,[],30000,[...picks,track(3)]);
+ assert.equal(stats.ai.mode,'ai-reranked');assert.deepEqual(out.map(t=>t.title),['Song 2','Song 1']);
+});

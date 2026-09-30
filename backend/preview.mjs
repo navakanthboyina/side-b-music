@@ -22,6 +22,15 @@ function previewMatches(rows,song,attempt,apple=false){
   return true;
  });
 }
+export function safeArtwork(value){
+ try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&(/^(?:[a-z0-9-]+\.)+mzstatic\.com$/.test(u.hostname)||u.hostname==='cdn-images.dzcdn.net'||u.hostname==='coverartarchive.org')?u.href:null;}catch{return null;}
+}
+function lookupFailure(error,attempt,diagnostics){
+ const message=String(error?.catalogCode||error?.message||'');
+ if(/catalog_budget|request budget exhausted/.test(message)){attempt.outcome='lookup_budget';diagnostics.noStore=true;}
+ else if(/timeout|abort/i.test(message+' '+error?.name))attempt.outcome='timeout';
+ else attempt.outcome='request_failed';
+}
 export const PREVIEW_COUNTRIES=['IN','US'];
 export function safePreviewUrl(value){
  try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&/^(?:[a-z0-9-]+\.)*(?:dzcdn\.net|deezer\.com|itunes\.apple\.com|mzstatic\.com)$/.test(u.hostname)?u.href:null;}catch{return null;}
@@ -55,7 +64,7 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    const t=matches.find(applePreview);
    attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
    if(t){diagnostics.selectedProvider='iTunes';return {...applePreview(t),country};}
-  }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';break;}
+  }catch(error){lookupFailure(error,attempt,diagnostics);break;}
  }
  // Multi-performer credits can over-constrain a catalog search. Retry once with
  // one credited performer, while retaining exact title and artist validation.
@@ -70,9 +79,9 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    const matches=previewMatches(data.data,song,attempt);
    attempt.rows=data.data.length;attempt.identityMatches=matches.length;
    const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
-   if(t){diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};
+   if(t){const art=safeArtwork(t.album?.cover_xl||t.album?.cover_big||t.album?.cover_medium);if(art){resource.artwork=art;resource.artworkSource='Deezer';}diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};
     return {url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id};}
-  }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';return null;}
+  }catch(error){lookupFailure(error,attempt,diagnostics);return null;}
  }
  return null;
 }

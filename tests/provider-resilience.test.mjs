@@ -54,3 +54,11 @@ test('Repeated Apple failures back off longer; a successful probe resets the del
  assert.equal((await get('https://itunes.apple.com/search')).headers.get('retry-after'),'600');assert.equal(calls,2);
  now+=600001;status=200;await get('https://itunes.apple.com/search');assert.equal(DB.sqlite.prepare("SELECT count FROM limits WHERE key='provider-cooldown:itunes.apple.com'").get(),undefined);DB.sqlite.close();
 });
+test('Internal enrichment budget failures never poison the on-demand preview cache',async()=>{
+ const DB=db(),song={artist:'Singer',title:'Track'},stats={};
+ await resolveResource(DB,song,async()=>{throw Error('catalog_budget');},stats);
+ assert.equal(stats.noStore,true);assert(stats.attempts.every(a=>a.outcome==='lookup_budget'));
+ assert.equal(DB.sqlite.prepare('SELECT count(*) AS n FROM song_resources').get().n,0);
+ const resource=await resolveResource(DB,song,async u=>u.includes('apple')?Response.json({results:[]}):Response.json({data:[{id:1,title:'Track',artist:{name:'Singer'},album:{cover_big:'https://cdn-images.dzcdn.net/images/cover/test/500x500.jpg'},preview:'https://cdn-preview-a.dzcdn.net/test.mp3'}]}));
+ assert.equal(resource.preview.source,'Deezer');assert.equal(resource.artworkSource,'Deezer');assert.match(resource.artwork,/cdn-images/);DB.sqlite.close();
+});

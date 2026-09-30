@@ -51,3 +51,11 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  Object.defineProperty(p.audio,'error',{value:{code:2}});p.audio.dispatchEvent(new w.Event('error'));assert.match(p.panel.textContent,/audio network request failed/);
  dom.window.close();console.log('PASS: autoplay permission and actual audio failures are distinguished.');
 })().catch(e=>{console.error(e);process.exitCode=1});
+(async()=>{
+ const {installPreviewPlayer}=await import('../preview-player.mjs');
+ const dom=new JSDOM('<article class="music-card"><div class="track-art"></div><button data-preview data-title="Song" data-artist="Singer">Preview</button></article>'),w=dom.window,d=w.document;
+ w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};w.HTMLMediaElement.prototype.play=async function(){};
+ installPreviewPlayer(d,w,async()=>({artwork:'https://cdn-images.dzcdn.net/images/cover/test/500.jpg',preview:{url:'https://cdn-preview-a.dzcdn.net/clip.mp3',link:'https://www.deezer.com/track/1'}}));
+ d.querySelector('button').click();await new Promise(r=>setImmediate(r));assert.match(d.querySelector('.track-art img').src,/cdn-images.dzcdn.net/);
+ dom.window.close();console.log('PASS: preview lookup restores matched Deezer artwork on the song card.');
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -100,3 +100,9 @@ Run `npm run diagnose` after deploying and refresh once after logging connects. 
 Build `apple-backoff-1` limits Apple to 10 requests per room window of 60 seconds, shared by search, enrichment and previews. The window starts with the first request instead of resetting at each clock minute. Upstream 429/503 responses pause Apple for at least five minutes, increasing to 10, 20, 40 and 80 minutes after consecutive failed probes; Retry-After can extend this. A successful request resets the failure count. Deezer remains available during the pause, and working preview mappings remain cached for six hours. Apple searches use one credited performer plus the song title, retaining identity checks on results.
 
 This reduces avoidable requests; it cannot force Apple to accept requests. `npm run diagnose` distinguishes `upstream`, `provider_cooldown` and `room_budget`, and shows `retryAfterSeconds`. No country hopping or proxy bypass is used after throttling.
+
+### Playback and artwork update
+
+Build `playback-artwork-1` sends only the selected diverse batch to AI for reordering. Internal enrichment budget exhaustion is reported as `lookup_budget` and is never cached as a provider failure. Old cached generic request failures are retried on demand. Matched Deezer covers are saved alongside available previews and returned on preview lookup so the frontend can update the cover. Provider availability and actual browser audio playback remain external dependencies.
+
+Shared taste has a Clear results button (does not delete shared likes) and an official Shazam link. Identify in Shazam, then search the title/artist here and explicitly add the catalog result. This is a manual handoff, not an embedded recognition SDK or automatic import.

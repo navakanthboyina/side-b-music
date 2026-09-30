@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'apple-backoff-1';
+export const RECOMMENDER_BUILD = 'playback-artwork-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -157,7 +157,7 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'song-identity-1','preview-match-1','familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'apple-backoff-1','song-identity-1','preview-match-1','familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=cleanDraft((draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar),state).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
@@ -245,6 +245,7 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
       const end=Date.now()+20000,base=budgetedCatalogFetch(catalogFetcher(env),{catalogRequests:0},end);
       const get=async(url,options)=>{if(enrichment.requests>=12||Date.now()>=end)throw Error('catalog_budget');enrichment.requests++;return base(url,options);};
       for(const t of picks){
+        if(enrichment.requests>=12||Date.now()>=end){enrichment.stopReason='lookup_budget';break;}
         try{const diagnostics={},r=await resolveResource(env.DB,t,get,diagnostics,async(url,options)=>{if(enrichment.requests>=12||Date.now()>=end)throw Error('catalog_budget');enrichment.requests++;return (env.ARTWORK_FETCH||fetch)(url,options);});
           if(diagnostics.cacheHit)enrichment.cacheHits++;t.catalog=r.apple||r.deezer||null;t.artwork=r.artwork||null;t.artworkSource=r.artworkSource||null;
         }catch{enrichment.errors++;}
@@ -355,9 +356,9 @@ export default {
         await recordActivity(env.DB,song,body.event,body.eventId);return reply({saved:true});
       }
       if(path==='/preview') {
-        const previewResult=(preview,diagnostics)=>{
+        const previewResult=(preview,diagnostics,resource={})=>{
           console.warn(JSON.stringify({event:'munna-preview',build:RECOMMENDER_BUILD,...diagnostics,found:!!preview}));
-          return reply({preview,diagnostics});
+          return reply({preview,diagnostics,artwork:resource.artwork||null,artworkSource:resource.artworkSource||null});
         };
         if(body.provider!==undefined){
           if(!['apple','deezer'].includes(body.provider)||!Number.isSafeInteger(body.id)||body.id<=0)throw fail(400,'Choose a catalog search result.');
@@ -369,14 +370,14 @@ export default {
             const raw=body.provider==='deezer'?data:data.results?.find(t=>t.trackId===body.id),song=catalogSong(body.provider,raw);
             if(!song||song.id!==body.id)throw Error();
             const diagnostics={};const r=await resolveResource(env.DB,song,get,diagnostics);
-            return previewResult(r.preview,diagnostics);
+            return previewResult(r.preview,diagnostics,r);
           }catch{throw fail(503,'Could not load this catalog preview. Try the listening links.');}
         }
 
         const song=cleanSong(body),row=await readPublic(env.DB);
         if(!knownSongs(row.state).some(t=>songKey(t)===songKey(song)))throw fail(400,'Choose a song from the shared dashboard.');
         await ipLimit(request,env.DB);
-        try{const diagnostics={};const known=knownSongs(row.state).find(t=>songKey(t)===songKey(song));const r=await resolveResource(env.DB,known||song,budgetedCatalogFetch(catalogFetcher(env),{catalogRequests:0},Date.now()+12000),diagnostics);return previewResult(r.preview,diagnostics);}
+        try{const diagnostics={};const known=knownSongs(row.state).find(t=>songKey(t)===songKey(song));const r=await resolveResource(env.DB,known||song,budgetedCatalogFetch(catalogFetcher(env),{catalogRequests:0},Date.now()+12000),diagnostics);return previewResult(r.preview,diagnostics,r);}
         catch{throw fail(503,'Song previews are unavailable right now. Try the listening links instead.');}
       }
       if(path==='/search'||path==='/taste/add') {

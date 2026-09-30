@@ -59,6 +59,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  room.familiarLanguageOverrideSupported=true;room.revision++;await b.api.sync();
  b.d.querySelector('#allow-unverified-familiar').click();b.d.querySelector('#refresh').click();await new Promise(r=>setImmediate(r));assert.equal(lastRefresh.allowUnverifiedFamiliar,true);
  room.batch.items[0].unverifiedFamiliar=true;room.batch.items[0].reusedRating='replay';room.revision++;await a.api.sync();assert.match(a.d.querySelector('#feed').textContent,/Familiar fallback · language unverified/);
+ b.d.querySelector('#song-query').value='test';b.d.querySelector('#song-search-results').textContent='old results';b.d.querySelector('#clear-song-search').click();assert.equal(b.d.querySelector('#song-query').value,'');assert.equal(b.d.querySelector('#song-search-results').textContent,'');assert(b.d.querySelector('a[href="https://www.shazam.com/"]'));
  for(const dom of clients)dom.window.close();
  console.log('PASS: two independent browser sessions show shared picks and feedback; same-artist songs remain independent; failed feedback never appears saved; private local data is not published.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
