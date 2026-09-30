@@ -1,6 +1,6 @@
 import {fillWithRatedSongs,verifiedSongLanguages} from './rated-fallback.mjs';
 import {catalogFetcher} from './catalog-access.mjs';
-import {PRIMARY_MODEL,rankCandidates,selectDiverse,rerankBatch,RECENT_MS,identities,uuid} from './ranking.mjs';
+import {PRIMARY_MODEL,rankCandidates,selectDiverse,rerankBatch,RECENT_MS,identities,uuid,cleanDraft,rankingStatus} from './ranking.mjs';
 import {resolveResource,activityState,recordActivity,getResource} from './resources.mjs';
 import {discoverSongs,discoveryEnabled} from './song-discovery.mjs';
 import {cachedCatalogFetch} from './catalog-cache.mjs';
@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'preview-match-1';
+export const RECOMMENDER_BUILD = 'song-identity-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -157,8 +157,8 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
-    let picks=(draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar).slice(0,12);const shortlist=[...picks];
+    const draft=[RECOMMENDER_BUILD,'preview-match-1','familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    let picks=cleanDraft((draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar),state).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
     discoveryCache=state.songDiscovery||{queries:{},languages:{},backoff:{}};state.songDiscovery=discoveryCache;
@@ -266,7 +266,7 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
     cacheSaved=true;
-    return {...publicState(await readPublic(env.DB)),generationStatus:complete?'saved':'pending',message:complete?(selectionStats.ratedFallback?.added?`12 picks saved for everyone · ${selectionStats.ratedFallback.added} returning favorites or familiar songs.`:modern?(selectionStats.ai?.mode==='ai-reranked'?'12 picks saved for everyone · AI reranked.':'12 picks saved for everyone · taste ranking (AI unavailable).'):'12 new AI picks saved for everyone.'):`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
+    return {...publicState(await readPublic(env.DB)),generationStatus:complete?'saved':'pending',message:complete?(selectionStats.ratedFallback?.added?`12 picks saved for everyone · ${selectionStats.ratedFallback.added} returning favorites or familiar songs.`:modern?('12 picks saved for everyone · '+rankingStatus(selectionStats.ai)+'.'):'12 new AI picks saved for everyone.'):`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
   } finally {
     if(latestStats&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.lastSelectionStats',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(latestStats),lease).run();
     if(discoveryCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(discoveryCache),lease).run();

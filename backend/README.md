@@ -88,3 +88,9 @@ The diagnostic no longer matches `cpuTime` followed by a preview `limitSource` a
 Build `preview-match-1` compares titles after removing only a trailing quoted `(From "Soundtrack")` attribution. If both titles name a soundtrack, those names must agree. Live, remix, instrumental and language-version labels are retained. A matching credited artist is still required; contributors supplied by the catalog can establish that credit. Preview attempt diagnostics include rejected title, artist and invalid-ID counts, without search terms or media URLs.
 
 A catalog `found:true` means a preview URL was returned, not that the browser played it. The player now distinguishes autoplay permission from network, decoding and unsupported-source failures. Those browser playback errors appear in the player; Wrangler only sees backend lookups. Apple 429 and absent Deezer coverage remain external limitations, and the existing cooldown and YouTube fallback are retained.
+
+### Song identity and AI diagnostics
+
+Recommendation comparison merges featured-credit placement and explicit soundtrack attribution aliases without changing saved rating keys. Live, remix, translated versions and different performers remain distinct. Compatible drafts are checked again before reuse; returning rated songs keep their familiar-song labels.
+
+Run `npm run diagnose` after deploying and refresh once after logging connects. Build `song-identity-1` reports invalid AI replies as `invalid_response` with a safe `validationReason` (invalid JSON, missing IDs, wrong count, duplicate IDs, outside-pool IDs, or diversity limits). Deterministic ranking still completes eligible batches. This does not remove provider rate limits or guarantee preview availability.

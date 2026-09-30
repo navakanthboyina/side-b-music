@@ -74,3 +74,30 @@ test('External redirects are rejected without forwarding provider credentials',a
  }},stats);
  assert.equal(calls,1);assert.equal(stats.ai.mode,'deterministic');assert.equal(out.length,2);
 });
+test('Reported soundtrack and featured-credit aliases share identity without changing stored keys',()=>{
+ const a={artist:'Sean Paul',title:'No Lie (feat. Dua Lipa)'},b={artist:'Sean Paul, Dua Lipa',title:'No Lie'};
+ assert.equal(variantKey(a),variantKey(b));assert.notEqual(songKey(a),songKey(b));
+ assert.equal(selectDiverse([a,b]).length,1);
+ const liked={artist:'Don Toliver',title:'Lose My Mind (feat. Doja Cat) [From F1® The Movie]'};
+ const candidate={...track(),artist:'Don Toliver',title:'Lose My Mind (feat. Doja Cat)'};
+ candidate.id=songKey(candidate);candidate.evidence.candidateId=songKey(candidate);
+ assert.equal(variantKey(liked),variantKey(candidate));
+ const s=state();s.songRatings[songKey(liked)]={...liked,value:'replay'};
+ const stats={};assert.equal(rankCandidates([candidate],[anchor],s,'Mixed',stats).length,0);assert.equal(stats.filtered.blocked,1);
+ for(const other of [{artist:'Other Singer',title:'No Lie (feat. Dua Lipa)'},{artist:'Sean Paul',title:'No Lie (feat. Someone Else)'},{artist:'Sean Paul, Dua Lipa',title:'No Lie (Live)'},{artist:'Sean Paul, Dua Lipa',title:'No Lie (Remix)'},{artist:'Sean Paul, Dua Lipa',title:'No Lie (Hindi Version)'}])assert.notEqual(variantKey(a),variantKey(other));
+});
+test('Old draft aliases are removed while explicitly returning favorites remain allowed',async()=>{
+ const {cleanDraft}=await import('../backend/ranking.mjs');
+ const a={artist:'Sean Paul',title:'No Lie (feat. Dua Lipa)'},b={artist:'Sean Paul, Dua Lipa',title:'No Lie'};
+ assert.equal(cleanDraft([a,b],state()).length,1);
+ const s=state();s.songRatings[songKey(a)]={...a,value:'replay'};
+ assert.equal(cleanDraft([b],s).length,0);assert.equal(cleanDraft([{...b,reusedRating:'replay'}],s).length,1);
+ s.songRatings[songKey(a)].value='skip';assert.equal(cleanDraft([{...b,reusedRating:'replay'}],s).length,0);
+});
+test('Invalid AI replies expose safe validation reasons and accurate fallback wording',async()=>{
+ const {rankingStatus}=await import('../backend/ranking.mjs');
+ for(const [reply,reason] of [['not json','invalid_json'],['{"ids":[1]}','wrong_count'],['{"ids":[1,1]}','duplicate_ids'],['{"ids":[1,99]}','outside_pool']]){
+  const stats={};await rerankBatch([track(1),track(2)],{AI:{run:async()=>({response:reply})}},stats);
+  assert.equal(stats.ai.attempts[0].validationReason,reason);assert.match(rankingStatus(stats.ai),/reply failed validation/);assert(!rankingStatus(stats.ai).includes('unavailable'));
+ }
+});

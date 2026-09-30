@@ -8,7 +8,30 @@ const norm=s=>String(s||'').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N
 export const uuid=s=>typeof s==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(s);
 // Strip mastering annotations only. Live, remix, acoustic and translated versions remain distinct.
 export const baseTitle=s=>String(s||'').replace(/\s*[([][^)\]]*\bremaster(?:ed)?\b[^)\]]*[)\]]/gi,'').replace(/\s*-\s*(?:\d{4}\s*)?remaster(?:ed)?(?:\s*\d{4})?\s*$/i,'');
-export const variantKey=t=>songKey({...t,title:baseTitle(t.title)});
+// Comparison identity only: keep persisted rating keys unchanged.
+export const variantKey=t=>{
+ const guests=[];
+ const title=baseTitle(t.title)
+  .replace(/\s*[([]From\s+[^)\]]+[)\]]/gi,'')
+  .replace(/\s+-\s+From\s+.+(?:The Album|Soundtrack)\s*$/i,'')
+  .replace(/\s*[([](?:feat\.?|featuring|ft\.?)\s+([^)\]]+)[)\]]/gi,(_,names)=>{guests.push(names);return '';});
+ const names=[t.artist,...guests].flatMap(s=>String(s||'').split(/\s*(?:,|&|;|\bfeat\.?|\bfeaturing|\bft\.?)\s*/i)).map(norm).filter(Boolean);
+ return 'track:'+ [...new Set(names)].sort().join('|')+':'+norm(title);
+};
+export function cleanDraft(items,state){
+ const denied=new Set([...(state.seedSongs||[]),...Object.values(state.songRatings||{})].flatMap(t=>identities(t,state)));
+ const disliked=new Set(Object.values(state.songRatings||{}).filter(t=>t.value==='skip').flatMap(t=>identities(t,state)));
+ const seen=new Set();return items.filter(t=>{
+  const ids=identities(t,state);
+  if(ids.some(id=>seen.has(id)||disliked.has(id)||(!t.reusedRating&&denied.has(id))))return false;
+  ids.forEach(id=>seen.add(id));return true;
+ });
+}
+export function rankingStatus(ai){
+ if(ai?.mode==='ai-reranked')return 'AI reranked';
+ const reason={invalid_response:'AI reply failed validation',quota:'AI quota reached',timeout:'AI timed out',provider_unavailable:'AI provider unavailable'}[ai?.fallbackReason];
+ return 'taste ranking'+(reason?' ('+reason+')':'');
+}
 export function identities(t,state={}){
  const info=state.songDiscovery?.languages?.[songKey(t)]||state.songDiscovery?.identities?.[songKey(t)];
  const id=t.recordingId||t.evidence?.recordingId||info?.recordingId||state.songDiscovery?.seedIds?.[songKey(t)]?.id;
@@ -74,12 +97,12 @@ export async function rerankBatch(picks,env,stats,feedback=[],timeoutMs=30000,sh
    const result=await Promise.race([provider.run(controller.signal),new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('timeout'));},budget);})]);
    const raw=result?.response??result?.choices?.[0]?.message?.content;
    const data=typeof raw==='object'?raw:JSON.parse(String(raw||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
-   if(!Array.isArray(data?.ids)||data.ids.length!==picks.length||new Set(data.ids).size!==picks.length||data.ids.some(id=>!Number.isInteger(id)||id<1||id>pool.length))throw Error('invalid_ids');
+   if(!Array.isArray(data?.ids)||data.ids.length!==picks.length||new Set(data.ids).size!==picks.length||data.ids.some(id=>!Number.isInteger(id)||id<1||id>pool.length))throw Object.assign(Error('invalid_ids'),{validationReason:!Array.isArray(data?.ids)?'missing_ids':data.ids.length!==picks.length?'wrong_count':new Set(data.ids).size!==picks.length?'duplicate_ids':'outside_pool'});
    const ordered=data.ids.map((id,i)=>({...pool[id-1],score:100-i}));
-   if(selectDiverse(ordered,[],picks.length).length!==picks.length)throw Error('invalid_ids');
+   if(selectDiverse(ordered,[],picks.length).length!==picks.length)throw Object.assign(Error('invalid_ids'),{validationReason:'diversity_limit'});
    attempt.outcome='selected';stats.ai.mode='ai-reranked';stats.ai.provider=provider.name;stats.ai.model=provider.model;delete stats.ai.fallbackReason;
    return ordered.map(t=>({...t,aiSong:true,rankingMode:'ai-reranked',reason:t.reason+' '+provider.label+' selected this from the verified shortlist.'}));
-  }catch(error){attempt.outcome=rankingFailure(error);if(error.status)attempt.status=error.status;stats.ai.fallbackReason=attempt.outcome;}
+  }catch(error){attempt.outcome=rankingFailure(error);if(attempt.outcome==='invalid_response')attempt.validationReason=error.validationReason||'invalid_json';if(error.status)attempt.status=error.status;stats.ai.fallbackReason=attempt.outcome;}
   finally{clearTimeout(timer);}
  }
  return picks.map(t=>({...t,aiSong:false,rankingMode:'deterministic'}));
