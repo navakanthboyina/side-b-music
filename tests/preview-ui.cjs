@@ -11,7 +11,7 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  buttons[0].click();p.panel.querySelector('.player-close').click();resolveFirst({preview:{url:'https://cdn-preview-a.dzcdn.net/first.mp3',link:'https://www.deezer.com/track/1'}});await new Promise(r=>setImmediate(r));assert.equal(plays,1);assert(p.panel.hidden);
  buttons[0].click();resolveFirst({preview:null});await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/No matching preview/);assert(!p.panel.querySelector('.player-fallback').hidden);assert.equal(plays,1);
  buttons[0].click();resolveFirst({preview:{url:'https://evil.example/music.mp3',link:'https://www.deezer.com/track/1'}});await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/Preview unavailable/);assert.equal(plays,1);
- p.audio.play=()=>Promise.reject(Error('Gesture required'));buttons[1].click();await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/press play to start/);assert(!p.panel.classList.contains('is-playing'));
+ p.audio.play=()=>Promise.reject(Object.assign(Error('Gesture required'),{name:'NotAllowedError'}));buttons[1].click();await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/press play to start/);assert(!p.panel.classList.contains('is-playing'));
  buttons[1].dataset.provider='deezer';buttons[1].dataset.id='42';buttons[1].click();await new Promise(r=>setImmediate(r));assert.deepEqual(lastLookup,{provider:'deezer',id:42});
 
  buttons[0].click();resolveFirst({preview:{source:'iTunes',url:'https://audio-ssl.itunes.apple.com/clip.m4a',link:'https://music.apple.com/in/album/example/123?i=456'}});
@@ -40,4 +40,14 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  d.querySelector('button').click();await new Promise(r=>setImmediate(r));
  assert.match(p.panel.textContent,/temporarily unavailable/);assert.match(p.panel.textContent,/temporarily paused/);assert.match(p.panel.textContent,/Deezer: no matching song/);assert(!p.panel.querySelector('.player-fallback').hidden);
  dom.window.close();console.log('PASS: provider outages and absent Deezer matches are reported separately.');
+})().catch(e=>{console.error(e);process.exitCode=1});
+(async()=>{
+ const {installPreviewPlayer}=await import('../preview-player.mjs');
+ const dom=new JSDOM('<button data-preview data-title="Song" data-artist="Singer">Preview</button>'),w=dom.window,d=w.document;
+ w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};
+ w.HTMLMediaElement.prototype.play=function(){return Promise.reject(Object.assign(Error('Cannot play'),{name:'NotSupportedError'}));};
+ const p=installPreviewPlayer(d,w,async()=>({preview:{url:'https://cdn-preview-a.dzcdn.net/clip.mp3',link:'https://www.deezer.com/track/1'}}));
+ d.querySelector('button').click();await new Promise(r=>setImmediate(r));assert.match(p.panel.textContent,/Preview URL found, but audio format or URL unavailable/);assert(!p.panel.textContent.includes('press play to start'));
+ Object.defineProperty(p.audio,'error',{value:{code:2}});p.audio.dispatchEvent(new w.Event('error'));assert.match(p.panel.textContent,/audio network request failed/);
+ dom.window.close();console.log('PASS: autoplay permission and actual audio failures are distinguished.');
 })().catch(e=>{console.error(e);process.exitCode=1});

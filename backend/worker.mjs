@@ -14,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'familiar-language-option-1';
+export const RECOMMENDER_BUILD = 'preview-match-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -157,7 +157,7 @@ async function refresh(env,language='Mixed',allowUnverifiedFamiliar=false) {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'familiar-language-option-1','rated-fallback-1','provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).filter(t=>allowUnverifiedFamiliar||language==='Mixed'||!t.unverifiedFamiliar).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);

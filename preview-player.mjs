@@ -12,7 +12,14 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
  audio.addEventListener('pause',()=>{spinning(false);if(audio.getAttribute('src'))status.textContent='Paused · '+provider+' preview';});
  audio.addEventListener('waiting',()=>{spinning(false);status.textContent='Buffering preview…';});
  audio.addEventListener('ended',()=>{spinning(false);status.textContent='Preview finished. Open the song link for more.';});
- audio.addEventListener('error',()=>{spinning(false);status.textContent='Preview could not play. Retry or open the provider link.';});
+ const playbackFailed=error=>{
+  spinning(false);
+  const code=audio.error?.code;
+  const detail=({1:'playback interrupted',2:'audio network request failed',3:'audio decoding failed',4:'audio format or URL unavailable'})[code]||
+   (error?.name==='NotSupportedError'?'audio format or URL unavailable':'audio playback failed');
+  status.textContent='Preview URL found, but '+detail+'. '+(win.navigator.onLine===false?'Your browser reports no internet connection. ':'')+'Retry the preview or open the provider link.';
+ };
+ audio.addEventListener('error',()=>{if(audio.getAttribute('src'))playbackFailed(audio.error);});
  audio.addEventListener('timeupdate',()=>{if(started&&!completed&&audio.currentTime>=15){completed=true;activity('complete');}if(audio.currentTime>=30){audio.pause();status.textContent='Preview finished. Open the song link for more.';}});
  panel.querySelector('.player-close').addEventListener('click',()=>{ticket++;stop();panel.hidden=true;doc.body.classList.remove('has-preview');});
  doc.addEventListener('click',async e=>{
@@ -36,7 +43,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
     const badge=doc.createElement('img');badge.src='https://tools.applemediaservices.com/api/badges/download-on-itunes/badge/en-us?size=250x83';badge.alt='Download on iTunes';badge.width=120;badge.height=40;source.append(badge);
    }else {source.textContent='Listen on Deezer ↗';if(appleAttempt)attribution.textContent='Apple: '+(appleAttempt.limitSource==='room_budget'?'shared lookup limit reached':appleAttempt.limitSource==='provider_cooldown'?'temporarily paused after provider error':appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':''))+' · using Deezer';}
    audio.src=u.href;status.textContent='Ready · press play for a 30-second preview';
-   try{await audio.play();}catch{if(mine===ticket)status.textContent='Ready · press play to start the preview';}
+   try{await audio.play();}catch(error){if(mine===ticket){if(error?.name==='NotAllowedError')status.textContent='Ready · press play to start the preview';else if(error?.name!=='AbortError')playbackFailed(error);}}
   }catch{if(mine===ticket)status.textContent='Preview unavailable. Please try again.';}
  });
  win.addEventListener('pagehide',()=>{ticket++;stop();});

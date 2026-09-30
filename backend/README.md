@@ -43,7 +43,7 @@ CSV columns: `Artist Name(s),Track Name` or `Artist,Title`; maximum 2 MB each. I
 
 ## Diagnostics
 
-`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `familiar-language-option-1`.
+`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `preview-match-1`.
 
 `/admin/ai-check` is an owner-only, explicitly invoked model probe, not part of page loads. It can consume AI allowance. Normal loads, previews and ratings do not call AI. Actual preview activity is stored as small aggregates, separate from explicit ratings.
 
@@ -79,6 +79,12 @@ For multi-performer preview searches, Deezer gets one shorter-credit retry after
 
 ## Optional unverified-language familiar fill
 
-Build `familiar-language-option-1` adds `allowUnverifiedFamiliar` (boolean, default false) to POST /refresh. The checkbox is shown beside language selection. With explicit opt-in, liked and Already know songs whose language is unknown can fill an incomplete batch; their language stays Unknown and the card visibly labels the exception. Confirmed other-language tracks, dislikes, duplicate recordings and diversity caps remain enforced. Disabling the option filters unverified familiar songs out of resumed language-filtered drafts. New discoveries still require the selected language evidence. No schema change or new secret is needed.
+Build `preview-match-1` adds `allowUnverifiedFamiliar` (boolean, default false) to POST /refresh. The checkbox is shown beside language selection. With explicit opt-in, liked and Already know songs whose language is unknown can fill an incomplete batch; their language stays Unknown and the card visibly labels the exception. Confirmed other-language tracks, dislikes, duplicate recordings and diversity caps remain enforced. Disabling the option filters unverified familiar songs out of resumed language-filtered drafts. New discoveries still require the selected language evidence. No schema change or new secret is needed.
 
 The diagnostic no longer matches `cpuTime` followed by a preview `limitSource` as a CPU error. Only a specific exceeded-CPU outcome or explicit exception/error message triggers that finding.
+
+## Preview match and playback diagnostics
+
+Build `preview-match-1` compares titles after removing only a trailing quoted `(From "Soundtrack")` attribution. If both titles name a soundtrack, those names must agree. Live, remix, instrumental and language-version labels are retained. A matching credited artist is still required; contributors supplied by the catalog can establish that credit. Preview attempt diagnostics include rejected title, artist and invalid-ID counts, without search terms or media URLs.
+
+A catalog `found:true` means a preview URL was returned, not that the browser played it. The player now distinguishes autoplay permission from network, decoding and unsupported-source failures. Those browser playback errors appear in the player; Wrangler only sees backend lookups. Apple 429 and absent Deezer coverage remain external limitations, and the existing cooldown and YouTube fallback are retained.

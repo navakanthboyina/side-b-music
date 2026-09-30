@@ -45,3 +45,16 @@ test('Multi-credit Deezer search retries one credited singer, without accepting 
  assert(!JSON.stringify(d).includes('Singer A'));
  const none=await findPreview(target,async u=>u.includes('apple')?new Response('',{status:429}):Response.json({data:[{id:2,title:'Track',artist:{name:'Wrong Singer'},preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'}]}));assert.equal(none,null);
 });
+test('Soundtrack attribution is matched conservatively and mismatch reasons are counted',async()=>{
+ const {previewTitleMatches}=await import('../backend/preview.mjs');
+ assert(previewTitleMatches('Maro Maro','Maro Maro (From "Boys")'));
+ assert(previewTitleMatches('Maro Maro (From “Boys”)','Maro Maro (From "Boys")'));
+ assert(!previewTitleMatches('Song (From "Film A")','Song (From "Film B")'));
+ for(const version of ['Remix','Live','Tamil Version','Instrumental'])assert(!previewTitleMatches('Song','Song ('+version+')'));
+ const d={};const p=await findPreview(song,async u=>u.includes('apple')?new Response('',{status:429}):Response.json({data:[
+  {id:1,title:'Other Song',artist:{name:song.artist}},
+  {id:2,title:song.title,artist:{name:'Unrelated Singer'}},
+  {id:3,title:song.title+' (From "Film")',artist:{name:song.artist},preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'}
+ ]}),d);
+ assert.equal(p.source,'Deezer');assert.deepEqual(d.attempts.at(-1).rejected,{title:1,artist:1,invalidId:0});
+});

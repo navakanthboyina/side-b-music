@@ -1,6 +1,27 @@
 import {credits,matchesArtist} from './relevance.mjs';
 const norm=s=>String(s||'').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 const artistMatch=(a,b)=>credits(b).some(credit=>matchesArtist(a,credit));
+// Strip only an explicit quoted soundtrack attribution, never live/remix/version text.
+function titleParts(value){
+ const text=String(value||'');
+ const match=text.match(/\s*\(From\s+["“]([^"”]+)["”]\)\s*$/i);
+ return {core:norm(match?text.slice(0,match.index):text),release:match?norm(match[1]):null};
+}
+export function previewTitleMatches(a,b){
+ const x=titleParts(a),y=titleParts(b);
+ return !!x.core&&x.core===y.core&&(!x.release||!y.release||x.release===y.release);
+}
+function previewMatches(rows,song,attempt,apple=false){
+ attempt.rejected={title:0,artist:0,invalidId:0};
+ return rows.filter(t=>{
+  if(!t||typeof t!=='object'){attempt.rejected.invalidId++;return false;}
+  if(!previewTitleMatches(apple?t.trackName:t.title,song.title)){attempt.rejected.title++;return false;}
+  const names=apple?[t.artistName]:[t.artist?.name,...(Array.isArray(t.contributors)?t.contributors.map(c=>c.name):[])];
+  if(!names.some(n=>typeof n==='string'&&artistMatch(song.artist,n))){attempt.rejected.artist++;return false;}
+  const id=apple?t.trackId:t.id;if(!Number.isSafeInteger(id)||id<=0){attempt.rejected.invalidId++;return false;}
+  return true;
+ });
+}
 export const PREVIEW_COUNTRIES=['IN','US'];
 export function safePreviewUrl(value){
  try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&/^(?:[a-z0-9-]+\.)*(?:dzcdn\.net|deezer\.com|itunes\.apple\.com|mzstatic\.com)$/.test(u.hostname)?u.href:null;}catch{return null;}
@@ -23,7 +44,7 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;
    const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
    const data=await response.json();if(!Array.isArray(data.results)){attempt.outcome='invalid_response';break;}
-   const matches=data.results.filter(t=>norm(t.trackName)===norm(song.title)&&artistMatch(song.artist,t.artistName||''));
+   const matches=previewMatches(data.results,song,attempt,true);
    attempt.rows=data.results.length;attempt.identityMatches=matches.length;
    const catalog=matches[0];
    if(catalog){resource.apple={id:catalog.trackId,country,link:applePreview(catalog)?.link||(/^https:\/\/(music|itunes)\.apple\.com\//.test(catalog.trackViewUrl||'')?catalog.trackViewUrl:null),album:catalog.collectionName,genre:catalog.primaryGenreName};
@@ -44,7 +65,7 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';return null;}
    const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
    const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';return null;}
-   const matches=data.data.filter(t=>Number.isSafeInteger(t.id)&&t.id>0&&norm(t.title)===norm(song.title)&&artistMatch(song.artist,t.artist?.name||''));
+   const matches=previewMatches(data.data,song,attempt);
    attempt.rows=data.data.length;attempt.identityMatches=matches.length;
    const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
    if(t){diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};

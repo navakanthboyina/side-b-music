@@ -2,7 +2,7 @@
 
 [Open the shared dashboard](https://navakanthboyina.github.io/side-b-music/)
 
-One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **familiar-language-option-1**.
+One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **preview-match-1**.
 
 ## Current recommendation flow
 
@@ -37,7 +37,7 @@ npm run diagnose
 
 Migration `0002_resources_activity.sql` adds cache/activity tables. **Do not recreate the database or re-import the 533 songs.** Existing playlists, ratings, visible batch and compatible unexpired draft remain. Keep your existing D1 database ID in `backend/wrangler.jsonc` and your existing Cloudflare secrets. No new paid service or API key is required for the fixes. Optional AI fallback providers require their own keys.
 
-Reload the website after deployment. The build in diagnostics must be `familiar-language-option-1`. The public backend URL remains in `shared-config.js`.
+Reload the website after deployment. The build in diagnostics must be `preview-match-1`. The public backend URL remains in `shared-config.js`.
 
 For a new installation, see [backend setup](backend/README.md).
 
