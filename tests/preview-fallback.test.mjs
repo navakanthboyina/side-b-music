@@ -33,3 +33,15 @@ test('Preview diagnostics distinguish Apple 429 from absent Deezer identity',asy
  const d={};assert.equal(await findPreview(song,async u=>new URL(u).hostname==='itunes.apple.com'?new Response('',{status:429}):Response.json({data:[]}),d),null);
  assert.deepEqual(d.attempts.map(a=>a.outcome),['http_error','no_matching_song']);assert.equal(d.attempts[0].status,429);
 });
+test('Multi-credit Deezer search retries one credited singer, without accepting a different song',async()=>{
+ const target={artist:'Singer A, Singer B, Singer C',title:'Track'},calls=[],d={};
+ const p=await findPreview(target,async input=>{
+  const u=new URL(input);if(u.hostname==='itunes.apple.com')return new Response('',{status:429});
+  calls.push(u.searchParams.get('q'));
+  return Response.json({data:calls.length===1?[]:[{id:1,title:'Track',artist:{name:'Singer A'},preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'}]});
+ },d);
+ assert.equal(p.source,'Deezer');assert.deepEqual(calls,['Singer A, Singer B, Singer C Track','Singer A Track']);
+ assert.equal(d.attempts.at(-1).queryMode,'primary_credit');assert.equal(d.attempts.at(-1).outcome,'found');
+ assert(!JSON.stringify(d).includes('Singer A'));
+ const none=await findPreview(target,async u=>u.includes('apple')?new Response('',{status:429}):Response.json({data:[{id:2,title:'Track',artist:{name:'Wrong Singer'},preview:'https://cdn-preview-a.dzcdn.net/clip.mp3'}]}));assert.equal(none,null);
+});

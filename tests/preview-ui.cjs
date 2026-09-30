@@ -31,3 +31,13 @@ const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
  assert.equal(events.filter(e=>e.event==='complete').length,1);assert(events.every(e=>e.artist==='Singer'&&e.eventId));
  dom.window.close();console.log('PASS: actual playback events are emitted once; lookup alone is not a listen.');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+(async()=>{
+ const {installPreviewPlayer}=await import('../preview-player.mjs');
+ const dom=new JSDOM('<button data-preview data-title="Song" data-artist="Singer">Preview</button>'),w=dom.window,d=w.document;
+ w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};
+ const p=installPreviewPlayer(d,w,async()=>({preview:null,diagnostics:{attempts:[{provider:'iTunes',outcome:'http_error',status:429,limitSource:'provider_cooldown'},{provider:'Deezer',outcome:'no_matching_song',status:200}]}}));
+ d.querySelector('button').click();await new Promise(r=>setImmediate(r));
+ assert.match(p.panel.textContent,/temporarily unavailable/);assert.match(p.panel.textContent,/temporarily paused/);assert.match(p.panel.textContent,/Deezer: no matching song/);assert(!p.panel.querySelector('.player-fallback').hidden);
+ dom.window.close();console.log('PASS: provider outages and absent Deezer matches are reported separately.');
+})().catch(e=>{console.error(e);process.exitCode=1});

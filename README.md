@@ -2,14 +2,14 @@
 
 [Open the shared dashboard](https://navakanthboyina.github.io/side-b-music/)
 
-One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **provider-resilience-1**.
+One listening room, no sign-in: everyone sees the same saved mix and can rate individual songs. GitHub Pages serves the frontend. Cloudflare Workers + D1 store the room and run discovery. Current build: **rated-fallback-1**.
 
 ## Current recommendation flow
 
 1. Read playlist songs, song ratings, recent recommendations and aggregated preview activity from D1. Prefer explicit liked songs as references; playing a preview is only weak feedback, not an automatic like.
 2. Last.fm supplies similar tracks. The official ListenBrainz dataset API supplies additional related recordings after an exact MusicBrainz seed lookup. Either provider can fail independently. Last.fm requires the existing API key and public-use approval; ListenBrainz requires no visitor account.
 3. Merge and normalize real candidates. MusicBrainz IDs resolve known recording aliases; mastering suffixes are deduplicated conservatively. Live, remix, acoustic and translated versions are not blindly merged. Missing identities remain text-matched; canonical resolution is best-effort, not universal.
-4. Exclude seeded/rated songs and recommendations from the previous **two days**. Unrated songs may return after that window. Language-specific selections require supported lyrics-language metadata; unknown language is permitted only in Mixed. Artist nationality and storefront country are never language proof.
+4. For fresh discovery, exclude seeded/rated songs and recommendations from the previous **two days**. If fewer than 12 qualify, fill remaining slots from liked songs first, then Already know songs. This fallback may reuse recent songs; disliked songs, duplicate recordings and language mismatches stay blocked. Returning songs are labeled explicitly. Unrated songs may return after that window. Language-specific selections require supported lyrics-language metadata; unknown language is permitted only in Mixed. Artist nationality and storefront country are never language proof.
 5. Deterministic scoring uses provider similarity, reference-song likes, weak preview feedback, novelty and exposure. Diversity limits keep at most two songs per artist, reference and known release. Language balancing prefers variety among eligible songs; it cannot guarantee equal representation.
 6. When a complete 12-song selection exists, send a verified shortlist of at most 24 candidates to `@cf/google/gemma-4-26b-a4b-it`. The bounded provider chain returns 12 unique candidate IDs. Metadata, language, blocking, identity and diversity remain server-controlled. Invalid IDs, a timeout, unavailable AI or quota exhaustion retain the deterministic selection. AI never invents songs or supplies their descriptions.
 7. Resolve selected songs against Apple/iTunes India, then US. Deezer remains an optional preview fallback to preserve working playback. Show YouTube search only when no usable preview is returned. A search result's provider ID is verified before the same Apple-first chain runs.
@@ -20,7 +20,7 @@ No audio analysis takes place. Descriptions state the discovery connection, not 
 
 ## Feedback and playback
 
-Like, Not for us, Already know and Clear affect individual songs. The latest shared rating replaces the previous one; this is not voting. Likes provide stronger references; skipped/known/liked songs are excluded from discovery themselves. Comfort mixes rotate daily and can be shuffled manually.
+Like, Not for us, Already know and Clear affect individual songs. The latest shared rating replaces the previous one; this is not voting. Likes provide stronger references; disliked songs remain excluded. Liked and Already know songs can return only when fresh matches cannot fill the batch. Comfort mixes rotate daily and can be shuffled manually.
 
 Actual preview playback records aggregate starts, reaching 15 seconds, and early stops under 10 seconds. A lookup alone is not counted as listening. Events are idempotent and rate-limited. They never overwrite explicit ratings. No visitor accounts or listening profiles are created.
 
@@ -37,7 +37,7 @@ npm run diagnose
 
 Migration `0002_resources_activity.sql` adds cache/activity tables. **Do not recreate the database or re-import the 533 songs.** Existing playlists, ratings, visible batch and compatible unexpired draft remain. Keep your existing D1 database ID in `backend/wrangler.jsonc` and your existing Cloudflare secrets. No new paid service or API key is required for the fixes. Optional AI fallback providers require their own keys.
 
-Reload the website after deployment. The build in diagnostics must be `provider-resilience-1`. The public backend URL remains in `shared-config.js`.
+Reload the website after deployment. The build in diagnostics must be `rated-fallback-1`. The public backend URL remains in `shared-config.js`.
 
 For a new installation, see [backend setup](backend/README.md).
 
@@ -51,6 +51,7 @@ Wait for “Live Worker events confirmed”, then click Refresh **once** and try
 
 - `discovery.eligibility`: unknown/other languages, rated/excluded songs, duplicates and capped references.
 - `discovery.requestsByProvider`: where the shared discovery budget went.
+- `ratedFallback`: eligible liked/known songs, added count, blocked aliases and language exclusions.
 - `pools[].ranking.filtered`: deterministic rejection reasons.
 - `ai.mode`: `ai-reranked` or `deterministic`; `fallbackReason` explains AI failures.
 - `catalog`: bounded post-selection enrichment requests/cache hits/errors.

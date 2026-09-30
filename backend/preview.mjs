@@ -33,16 +33,23 @@ export async function findPreview(song,fetchCatalog,diagnostics={},resource={}){
    if(t){diagnostics.selectedProvider='iTunes';return {...applePreview(t),country};}
   }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';break;}
  }
- const attempt={provider:'Deezer'};diagnostics.attempts.push(attempt);
- try{
-  const response=await fetchCatalog('https://api.deezer.com/search?'+new URLSearchParams({q:song.artist+' '+song.title,limit:'25'}),{timeoutMs:3500});
-  attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';return null;}
-  const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
-  const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';return null;}
-  const matches=data.data.filter(t=>Number.isSafeInteger(t.id)&&t.id>0&&norm(t.title)===norm(song.title)&&artistMatch(song.artist,t.artist?.name||''));
-  attempt.rows=data.data.length;attempt.identityMatches=matches.length;
-  const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
-  if(t){diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};}
-  return t?{url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id}:null;
- }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';return null;}
+ // Multi-performer credits can over-constrain a catalog search. Retry once with
+ // one credited performer, while retaining exact title and artist validation.
+ const primaryCredit=credits(song.artist).find(c=>c!==song.artist.trim())||song.artist;
+ const queries=[...new Set([song.artist+' '+song.title,primaryCredit+' '+song.title])];
+ for(let i=0;i<queries.length;i++){
+  const attempt={provider:'Deezer',queryMode:i?'primary_credit':'full_credits'};diagnostics.attempts.push(attempt);
+  try{
+   const response=await fetchCatalog('https://api.deezer.com/search?'+new URLSearchParams({q:queries[i],limit:'25'}),{timeoutMs:3500});
+   attempt.status=response.status;if(!response.ok){attempt.outcome='http_error';return null;}
+   const cc=response.headers.get('cache-control')||'';if(/no-store|no-cache/i.test(cc))diagnostics.noStore=true;const age=cc.match(/max-age=(\d+)/i);if(age)diagnostics.maxAgeMs=Math.min(diagnostics.maxAgeMs??Infinity,Number(age[1])*1000);
+   const data=await response.json();if(!Array.isArray(data.data)){attempt.outcome='invalid_response';return null;}
+   const matches=data.data.filter(t=>Number.isSafeInteger(t.id)&&t.id>0&&norm(t.title)===norm(song.title)&&artistMatch(song.artist,t.artist?.name||''));
+   attempt.rows=data.data.length;attempt.identityMatches=matches.length;
+   const t=matches.find(t=>safePreviewUrl(t.preview));attempt.outcome=t?'found':matches.length?'no_playable_preview':'no_matching_song';
+   if(t){diagnostics.selectedProvider='Deezer';resource.deezer={id:t.id,link:'https://www.deezer.com/track/'+t.id};
+    return {url:safePreviewUrl(t.preview),source:'Deezer',duration:30,link:'https://www.deezer.com/track/'+t.id};}
+  }catch(error){attempt.outcome=['TimeoutError','AbortError'].includes(error?.name)?'timeout':'request_failed';return null;}
+ }
+ return null;
 }

@@ -43,7 +43,7 @@ CSV columns: `Artist Name(s),Track Name` or `Artist,Title`; maximum 2 MB each. I
 
 ## Diagnostics
 
-`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `provider-resilience-1`.
+`npm run diagnose` captures before/after state and Worker logs for three minutes, without triggering refresh. Once connected, refresh once in the dashboard and try a preview. Share the after snapshot and `munna-preview` events. Build: `rated-fallback-1`.
 
 `/admin/ai-check` is an owner-only, explicitly invoked model probe, not part of page loads. It can consume AI allowance. Normal loads, previews and ratings do not call AI. Actual preview activity is stored as small aggregates, separate from explicit ratings.
 
@@ -68,3 +68,11 @@ Enter `true` for the last secret only after confirming those account settings an
 After deployment, `npm run diagnose` reports `ai.attempts` with provider, model, selected/failure outcome and HTTP status when available. `discovery.scheduling` shows backlog priority; `metadata_provider_cooldown` identifies MusicBrainz backoff. Apple preview attempts expose `limitSource` (`upstream`, `room_budget`, `provider_cooldown`) and retry delay. JSON tail mode has no Wrangler connection banner, so the diagnostic now uses read-only probes to confirm event delivery and preserves startup messages from stdout as well as stderr. Missing events are still reported honestly rather than interpreted as success.
 
 References: [Groq models](https://console.groq.com/docs/models), [Groq free limits](https://console.groq.com/docs/rate-limits), [Gemini pricing and free-tier data use](https://ai.google.dev/gemini-api/docs/pricing).
+
+## Familiar-song fallback
+
+Fresh discoveries remain first. If discovery finishes with fewer than 12 songs, liked songs and then Already know songs may fill the remaining places, including recent recommendations. Disliked songs stay excluded, as do duplicate identities, wrong/unknown languages for language-filtered batches and songs exceeding the existing diversity caps. Mixed permits unknown language. The fallback uses saved verified language metadata, not language guesses from artist names or country. New feedback preserves available server-verified language labels for reuse. No extra AI or catalog request is needed to select familiar songs. AI may reorder the completed mix but cannot replace approved fresh songs with additional familiar ones.
+
+Diagnostics expose `ratedFallback.added`, `eligible`, `blocked`, `language` and `remaining`. Remaining entries may be duplicates, hit a diversity cap or exceed available slots; they are not all failed songs. Existing compatible drafts survive this upgrade. The dashboard labels returning songs and distinguishes preview-provider failures from a confirmed missing preview. A provider HTTP 429 cannot be eliminated by changing recommendation rules.
+
+For multi-performer preview searches, Deezer gets one shorter-credit retry after a successful response without a playable exact match. The title and credited-artist validation stays unchanged; provider errors are not retried. Diagnostics identify full_credits versus primary_credit without exposing the search query.

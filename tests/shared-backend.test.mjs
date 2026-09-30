@@ -211,7 +211,7 @@ test('Repeated extraneous model anchor IDs no longer collapse a valid batch to o
  const s=setup();
  s.env.AI.run=async(model,input)=>({response:{picks:selection(input).picks.map(p=>({...p,anchorId:1,reason:'Unsupported claim that must not be displayed'}))}});
  const response=await s.call('/refresh',{});assert.equal(response.status,200);
- const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'provider-resilience-1');
+ const batch=(await response.json()).batch;assert.equal(batch.items.length,12);assert.equal(batch.selectionStats.build,'rated-fallback-1');
  for(const t of batch.items){
   assert(t.reason.includes('Anchor Song '+t.artist.replace('Fixture Artist ','')));
   assert(!t.reason.includes('Unsupported claim'));
@@ -688,8 +688,8 @@ test('Failed refresh persists its own diagnostics instead of exposing an expired
  s.env.CATALOG_FETCH=async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]});
  const response=await s.call('/refresh',{});assert.equal(response.status,422);
  const failure=await response.json(),state=await s.state();
- assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'provider-resilience-1');
- assert.equal(state.pendingSelectionStats.build,'provider-resilience-1');
+ assert.equal(state.pendingSongCount,0);assert.equal(state.lastSelectionStats.build,'rated-fallback-1');
+ assert.equal(state.pendingSelectionStats.build,'rated-fallback-1');
  assert.equal(state.lastSelectionStats.candidateCount,failure.selectionStats.candidateCount);
  s.sqlite.close();
 });
@@ -739,4 +739,15 @@ test('Cover Art Archive is optional, uses a verified release identity, and cache
  const {resolveResource}=await import('../backend/resources.mjs');const s=setup(),releaseId='11111111-1111-4111-8111-111111111111';let heads=0;
  const r=await resolveResource(s.env.DB,{...fixture,releaseId},async u=>Response.json(new URL(u).hostname==='itunes.apple.com'?{results:[]}:{data:[]}),{},async(u,o)=>{heads++;assert.equal(o.method,'HEAD');assert.equal(u,'https://coverartarchive.org/release/'+releaseId+'/front-250');return new Response(null,{status:307});});
  assert.equal(r.artworkSource,'Cover Art Archive');assert.equal(r.preview,null);assert(r.youtube.includes('youtube.com/results'));assert.equal(heads,1);s.sqlite.close();
+});
+test('Upgrade retains nine draft songs and publishes twelve with three labeled rated fallbacks',async()=>{
+ const s=setup(),state=savedDiscoveryFixture(s);
+ state.songDiscovery.queries={};state.songDiscovery.languages={};
+ state.pending={language:'Telugu',at:Date.now(),selectionStats:{build:'provider-resilience-1'},items:Array.from({length:9},(_,i)=>({artist:'Approved '+i,title:'Fresh '+i,language:'Telugu',reason:'Verified discovery',rankingMode:'deterministic'}))};
+ for(let i=0;i<3;i++){const t={artist:'Favorite '+i,title:'Rated '+i,value:i===2?'known':'replay',verifiedLanguages:['Telugu'],at:Date.now()};state.songRatings[songKey(t)]=t;}
+ s.sqlite.prepare('UPDATE community SET data=? WHERE id=1').run(JSON.stringify(state));s.env.AI.run=async()=>{throw Error('quota');};
+ const r=await (await s.call('/refresh',{language:'Telugu'})).json();
+ assert.equal(r.batch.items.length,12);assert.equal(r.batch.selectionStats.resumedCount,9);assert.equal(r.batch.selectionStats.ratedFallback.added,3);
+ assert.equal(r.batch.items.filter(t=>t.reusedRating).length,3);assert.equal(r.batch.items.filter(t=>t.title.startsWith('Fresh')).length,9);assert.equal(r.pendingSongCount,0);
+ assert.match(r.message,/3 returning/);s.sqlite.close();
 });

@@ -1,3 +1,4 @@
+import {fillWithRatedSongs,verifiedSongLanguages} from './rated-fallback.mjs';
 import {catalogFetcher} from './catalog-access.mjs';
 import {PRIMARY_MODEL,rankCandidates,selectDiverse,rerankBatch,RECENT_MS,identities,uuid} from './ranking.mjs';
 import {resolveResource,activityState,recordActivity,getResource} from './resources.mjs';
@@ -13,7 +14,7 @@ import starter from './starter.mjs';
 import { songKey } from '../ai-core.mjs';
 import { RELEVANCE_VERSION, credits, matchesArtist, tasteAnchors, relevanceMessages, parseRelevantPicks, selectionFormat } from './relevance.mjs';
 
-export const RECOMMENDER_BUILD = 'provider-resilience-1';
+export const RECOMMENDER_BUILD = 'rated-fallback-1';
 export const MODEL = PRIMARY_MODEL;
 const WINDOW = 14 * 86400000;
 const norm = s => s.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -156,7 +157,7 @@ async function refresh(env,language='Mixed') {
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
-    const draft=[RECOMMENDER_BUILD,'candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
+    const draft=[RECOMMENDER_BUILD,'provider-resilience-1','candidate-ranking-1','discovery-audit-1','preview-cpu-1','discovery-diversity-1','musicbrainz-missing-1','musicbrainz-redirect-1','discovery-runtime-2','saved-discovery-1','catalog-recovery-1','language-search-1','reference-cache-1','comfort-replay-1','compact-selection-1','language-discovery-1'].includes(state.pending?.selectionStats?.build)&&(state.pending.language||'Mixed')===language&&state.pending?.at>now-86400000?state.pending:null;
     let picks=(draft?.items||[]).slice(0,12);const shortlist=[...picks];
     const modern=discoveryEnabled(env);
     if(modern)state.activity=await activityState(env.DB);
@@ -231,13 +232,14 @@ async function refresh(env,language='Mixed') {
       poolStats.accepted=picks.length-before;
       if(selectionStats.catalogRequests>=30||providersPaused()){selectionStats.stopReason=providersPaused()?'both_catalogs_paused':'catalog_budget';break;}
     }
+    if(modern)picks=fillWithRatedSongs(picks,state,language,selectionStats);
     if(!picks.length&&selectionStats.attempts.length&&selectionStats.attempts.every(a=>a.error==='inference failed'))throw Object.assign(fail(503,selectionStats.attempts.at(-1).inference.detail+' No AI selections were returned. Previous picks remain saved.'),{selectionStats});
     if(!picks.length&&language!=='Mixed'&&selectionStats.attempts.length){
       const missing=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.missingLanguage||0),0),filtered=selectionStats.attempts.reduce((n,a)=>n+(a.rejected?.languageFilter||0),0);
       throw Object.assign(fail(422,`No new ${language} picks were approved. ${missing?'AI omitted valid language labels for '+missing+' entries. ':''}${filtered?filtered+' entries were another language or Unknown. ':''}${selectionStats.attempts.some(a=>a.formatError)?'Some AI replies had an invalid format. ':''}The previous batch is unchanged. Try All languages or refresh for other playlist references.`),{selectionStats});
     }
     if(!picks.length)throw Object.assign(fail(422,`${selectionStats.candidateCount===0&&selectionStats.pools.some(p=>p.error==='catalog unavailable')?'Catalog requests failed before AI selection. ':''}Found ${picks.length} of 12 required matches after searching ${selectionStats.pools.length} candidate pools. The previous batch is unchanged. Try again later for other playlist references.`),{selectionStats});
-    if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,30000,shortlist);
+    if(modern&&picks.length===12)picks=await rerankBatch(picks,env,selectionStats,feedback,30000,picks.some(t=>t.reusedRating)?picks:shortlist);
     if(modern&&picks.length===12){
       const enrichment={requests:0,cacheHits:0,errors:0};selectionStats.catalog=enrichment;
       const end=Date.now()+20000,base=budgetedCatalogFetch(catalogFetcher(env),{catalogRequests:0},end);
@@ -252,7 +254,7 @@ async function refresh(env,language='Mixed') {
     const at=Date.now();
     const complete=picks.length===12;
     if(complete) {
-      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource})=>({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
+      state.batch={at,language,items:picks.map(({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating})=>({artist,title,reason,aiSong,rankingMode,language,languageBasis,sourceUrl,recordingId,releaseId,artistIds,catalog,artwork,artworkSource,reusedRating})),model:MODEL,relevanceVersion:RELEVANCE_VERSION,selectionStats};
       state.pending=null;
       state.history=[...(state.history||[]).filter(t=>at-t.at<14*86400000),...state.batch.items.map(({artist,title,recordingId})=>({artist,title,recordingId,at}))].slice(-500);
       for(const [key,time] of Object.entries(state.shown))if(at-time>=WINDOW)delete state.shown[key];
@@ -264,7 +266,7 @@ async function refresh(env,language='Mixed') {
     const committed = await query(env.DB,'UPDATE community SET data=?,revision=revision+1,lease=NULL,lease_until=0 WHERE id=1 AND revision=? AND lease=? AND lease_until>?',JSON.stringify(state),row.revision,lease,at).run();
     if(!committed.meta.changes)throw fail(409,'Shared feedback changed while AI was working. Existing picks remain. Refresh again for the new feedback.');
     cacheSaved=true;
-    return {...publicState(await readPublic(env.DB)),generationStatus:complete?'saved':'pending',message:complete?(modern?(selectionStats.ai?.mode==='ai-reranked'?'12 picks saved for everyone · AI reranked.':'12 picks saved for everyone · taste ranking (AI unavailable).'):'12 new AI picks saved for everyone.'):`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
+    return {...publicState(await readPublic(env.DB)),generationStatus:complete?'saved':'pending',message:complete?(selectionStats.ratedFallback?.added?`12 picks saved for everyone · ${selectionStats.ratedFallback.added} returning favorites or familiar songs.`:modern?(selectionStats.ai?.mode==='ai-reranked'?'12 picks saved for everyone · AI reranked.':'12 picks saved for everyone · taste ranking (AI unavailable).'):'12 new AI picks saved for everyone.'):`${picks.length}/12 approved songs saved in the shared draft. ${modern&&selectionStats.discovery?.errors.length?'Discovery providers could not complete some requests; saved candidates and your draft were preserved. Check discovery errors in diagnostics.':modern?'Still looking for '+(12-picks.length)+' songs with supported language and taste matches. Cached candidates will be reused on the next refresh.':providersPaused()?'Both music catalogs failed; generation stopped and your picks were preserved. See catalogErrors in diagnostics.':'After the cooldown, refresh to find the remaining '+(12-picks.length)+'.'} The visible batch has not changed.`};
   } finally {
     if(latestStats&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.lastSelectionStats',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(latestStats),lease).run();
     if(discoveryCache&&!cacheSaved)await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?)),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(discoveryCache),lease).run();
@@ -409,7 +411,7 @@ export default {
         if(!knownSongs(s).some(t=>songKey(t)===key))throw fail(400,'Rate a song from the shared dashboard.');
         s.pending=null; // A draft must never carry scores from an older feedback profile.
         if(body.rating==='clear')delete s.songRatings[key];
-        else s.songRatings[key]={...song,value:body.rating,at:Date.now()};
+        else s.songRatings[key]={...song,value:body.rating,at:Date.now(),verifiedLanguages:verifiedSongLanguages(song,s)};
         if(Object.keys(s.songRatings).length>5000)throw fail(409,'Shared feedback is full. Ask the owner to archive it.');
       }));
     } catch(error) { return reply({error:error.status?error.message:'Shared service is unavailable or its free allowance is exhausted. Existing picks remain saved.',...(error.selectionStats?{selectionStats:error.selectionStats}:{})},error.status||503); }

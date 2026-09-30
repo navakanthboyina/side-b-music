@@ -24,7 +24,7 @@ export function installPreviewPlayer(doc,win,lookup,onActivity=()=>{}){
   try{
    const {preview,diagnostics}=await lookup(button.dataset.provider?{provider:button.dataset.provider,id:Number(button.dataset.id)}:song);if(mine!==ticket)return;
    const attempts=diagnostics?.attempts||[];const appleAttempt=attempts.find(a=>a.provider==='iTunes'&&a.outcome!=='found');
-   if(!preview){fallback.hidden=false;status.textContent='No matching preview available. Find the song on YouTube.';if(appleAttempt)attribution.textContent='Apple: '+(appleAttempt.limitSource==='room_budget'?'shared lookup limit reached':appleAttempt.limitSource==='provider_cooldown'?'temporarily paused after provider error':appleAttempt.outcome.replaceAll('_',' ')+(appleAttempt.status?' (HTTP '+appleAttempt.status+')':''));return;}
+   if(!preview){fallback.hidden=false;status.textContent=attempts.some(a=>['http_error','timeout','request_failed','invalid_response'].includes(a.outcome))?'Preview lookup is temporarily unavailable from one or more providers. Try later or find the song on YouTube.':'No matching preview available. Find the song on YouTube.';attribution.textContent=attempts.map(a=>(a.provider==='iTunes'?'Apple':a.provider)+': '+(a.limitSource==='room_budget'?'shared lookup limit reached':a.limitSource==='provider_cooldown'?'temporarily paused after provider error':a.outcome.replaceAll('_',' ')+(a.status&&a.status!==200?' (HTTP '+a.status+')':''))).join(' · ');return;}
    const u=new URL(preview.url),link=new URL(preview.link);
    const clean=x=>x.protocol==='https:'&&!x.username&&!x.password&&!x.port;
    const apple=/^(?:[a-z0-9-]+\.)*(?:itunes\.apple\.com|mzstatic\.com)$/.test(u.hostname)&&['music.apple.com','itunes.apple.com'].includes(link.hostname);
