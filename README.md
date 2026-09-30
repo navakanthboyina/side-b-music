@@ -229,3 +229,5 @@ GET /state now removes catalog/discovery/language caches in the D1 query before 
 MusicBrainz 503 responses remain external outages. Verified language metadata is still required for language-specific recommendation sets. This update does not relabel unknown songs, lower relevance thresholds or guarantee 12 fresh picks. Use npm run diagnose after deployment to verify actual provider availability, CPU outcomes and batch progress.
 
 Validation includes storefront order, exact matching, rate-limit fallback, unsafe URL rejection, large-cache public state reads, browser preview behavior and Worker runtime checks in GitHub Actions.
+
+Refresh source rotation now updates its single JSON field atomically in D1 instead of reading and serializing the entire room in Worker JavaScript. Modern discovery and daily warming omit obsolete legacy catalog/language caches when reading state. These are additional CPU reductions, not a change to song ratings or language eligibility.

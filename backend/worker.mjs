@@ -149,7 +149,7 @@ async function refresh(env,language='Mixed') {
   try {
     await limited(env.DB, 'generation:'+new Date(now).toISOString().slice(0,10), 30, now+2*86400000);
     // Advance source rotation even on empty catalog/AI failure, without replacing the saved batch.
-    await mutate(env.DB, s=>{s.rotation++;});
+    await query(env.DB,"UPDATE community SET data=json_set(data,'$.rotation',coalesce(json_extract(data,'$.rotation'),0)+1),revision=revision+1 WHERE id=1").run();
     const row = discoveryEnabled(env)?await readDiscovery(env.DB):await read(env.DB), state = row.state;
     const ratings = Object.values(state.songRatings).sort((a,b)=>b.at-a.at);
     const feedback=ratings.slice(0,24).map(({artist,title,value})=>({artist,title,rating:value}));
@@ -386,7 +386,7 @@ export default {
     if(!locked.meta.changes)return;
     let state;
     try{
-      state=(await read(env.DB)).state;
+      state=(await readDiscovery(env.DB)).state;
       const anchors=tasteAnchors({...state,rotation:(state.discoveryRotation||0)+state.rotation},new Set(),16);
       await discoverSongs(state,env,{anchors,enrichLanguage:true,deadline:now+45000});
       await query(env.DB,"UPDATE community SET data=json_set(data,'$.songDiscovery',json(?),'$.discoveryRotation',?),revision=revision+1 WHERE id=1 AND lease=?",JSON.stringify(state.songDiscovery),(state.discoveryRotation||0)+1,lease).run();
