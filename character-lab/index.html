@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b0c" />
+  <meta name="description" content="Munna's Grooves Character Lab — isolated 3D interaction testbed." />
+  <title>Munna's Grooves — Character Lab</title>
+</head>
+<body>
+  <main class="lab-shell">
+    <header class="lab-header">
+      <div>
+        <p class="eyebrow">MUNNA'S GROOVES / CHARACTER LAB</p>
+        <h1>Character behavior before website integration.</h1>
+      </div>
+      <div id="runtime-status" class="status" role="status">Starting 3D runtime…</div>
+    </header>
+
+    <section class="stage" aria-label="Interactive character stage">
+      <canvas id="experience"></canvas>
+      <div class="stage-help">
+        <strong>Interaction test</strong>
+        <span>Move the pointer around Munna. Click the stage. Trigger playback controls below.</span>
+      </div>
+    </section>
+
+    <section class="road-preview" aria-label="Preview road test">
+      <span class="road-label">PREVIEW TILE / ROAD BEHAVIOR</span>
+      <div class="road-line" aria-hidden="true"></div>
+      <div id="preview-mount" class="preview-mount" aria-hidden="true"></div>
+      <div class="preview-meta">
+        <div><strong>Character locomotion</strong><span>Forward/3-quarter listening walk. Never side-profile sprite walking.</span></div>
+        <div><strong id="preview-time">0.0 / 30.0 sec</strong><span id="preview-state">Idle</span></div>
+      </div>
+    </section>
+
+    <div class="controls" aria-label="Character Lab controls">
+      <button id="play">Play preview</button>
+      <button id="pause">Pause</button>
+      <button id="like">Like</button>
+      <button id="dislike">Not for us</button>
+      <button id="skip">Skip</button>
+      <button id="runner-pass">Runner passes DJ</button>
+    </div>
+
+    <section class="notes">
+      <article><h2>DJ Munna</h2><p>Seated at a real DJ booth. AnimationMixer blends authored clips; gaze follows interaction; facial morphs are driven independently.</p></article>
+      <article><h2>Preview Munna</h2><p>Uses the same rig. Locomotion travels across the preview road while body orientation remains readable to the viewer. Earbud particles come from model sockets.</p></article>
+      <article><h2>Shadow chase</h2><p>Finite-state behavior chooses run, wait, peek, hide, jump and cursor-dodge states across navigable surfaces instead of looping a fixed path.</p></article>
+    </section>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
