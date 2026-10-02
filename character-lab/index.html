@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b0c" />
+  <title>Munna’s Grooves — Character Lab</title>
+</head>
+<body>
+  <main class="lab-shell">
+    <header class="lab-header">
+      <div>
+        <p class="eyebrow">MUNNA’S GROOVES / CHARACTER LAB</p>
+        <h1>Character behavior before website integration.</h1>
+      </div>
+      <div class="status" id="asset-status">Loading 3D assets…</div>
+    </header>
+
+    <section class="stage" id="stage" aria-label="3D character test stage">
+      <canvas id="experience"></canvas>
+      <div class="stage-help">
+        <strong>Interaction test</strong>
+        <span>Move the pointer around Munna. Hover or click the runners. Use the controls below.</span>
+      </div>
+    </section>
+
+    <section class="road-preview" id="preview-road">
+      <div class="road-label">PREVIEW TILE / WALK-LISTEN TEST</div>
+      <div class="road-line" aria-hidden="true"></div>
+      <div id="preview-mount" class="preview-mount" aria-hidden="true"></div>
+      <div class="preview-meta">
+        <div>
+          <strong>Agar Tum Saath Ho</strong>
+          <span>Arijit Singh · simulated 30-second preview</span>
+        </div>
+        <span id="preview-time">0:00 / 0:30</span>
+      </div>
+    </section>
+
+    <section class="controls" aria-label="Character behavior controls">
+      <button data-lab-action="play">▶ Preview</button>
+      <button data-lab-action="pause">Ⅱ Pause</button>
+      <button data-lab-action="like">♡ Like</button>
+      <button data-lab-action="dislike">Not for us</button>
+      <button data-lab-action="skip">Skip</button>
+      <button data-lab-action="surprise">Surprise Munna</button>
+    </section>
+
+    <section class="notes">
+      <article>
+        <h2>Munna</h2>
+        <p>Seated at the DJ deck. Gaze, facial morphs, upper-body gestures and DJ actions are separate systems. Reactions are blended and held long enough to read.</p>
+      </article>
+      <article>
+        <h2>Preview Munna</h2>
+        <p>Same rig, different locomotion state. He travels forward along the preview road with a 3/4 chest orientation toward the viewer while listening. Earbud notes are generated in world space.</p>
+      </article>
+      <article>
+        <h2>Shadow pair</h2>
+        <p>Continuous world actors. Their behavior does not depend on music. Music only modifies intensity. Cursor proximity can trigger dodge, peek, reverse or hide states.</p>
+      </article>
+    </section>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
