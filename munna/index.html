@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080a0f">
+  <meta name="description" content="Munna's Grooves — a dark, playful shared listening room with an interactive DJ character.">
+  <title>Munna’s Grooves — Munna DJ v42</title>
+  <link rel="stylesheet" href="./src/style.css">
+  <script type="importmap">{"imports":{"three":"./vendor/three/build/three.module.js","three/addons/":"./vendor/three/examples/jsm/"}}</script>
+<link rel="stylesheet" href="../experience-switcher.css?v=v42-pages-1">
+<script src="../shared-config.js"></script>
+</head>
+<body>
+<canvas id="roomViz" class="ambient-room-viz" aria-hidden="true"></canvas>
+<a class="skip-link" href="#main">Skip to music</a>
+<header class="site-header">
+  <a class="brand" href="#discover" aria-label="Munna’s Grooves home">
+    <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span>Munna’s <b>Grooves</b></span>
+  </a>
+  <nav class="main-nav" aria-label="Main navigation">
+    <a href="#discover" class="nav-link active" data-view="discover">Room</a>
+    <a href="#plan" class="nav-link" data-view="plan">2-day set</a>
+    <a href="#comfort" class="nav-link" data-view="comfort">Comfort</a>
+    <a href="#profile" class="nav-link" data-view="profile">Your taste</a>
+  </nav>
+  <div class="header-tools">
+    <label class="quick-search" aria-label="Search current mix"><span>⌕</span><input id="mixSearch" placeholder="Search the room" autocomplete="off"></label>
+    <button class="icon-button" id="reloadMix" title="Reload mix" aria-label="Reload current mix">↻</button>
+  </div>
+</header>
+
+<div class="site-shell">
+  <main id="main" tabindex="-1">
+    <section id="view-discover" class="view">
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="hero-kicker"><span class="live-dot"></span><span>ROOM 01 · HUMAN-SIZED DISCOVERY</span><strong id="today"></strong></div>
+          <h1>Music discovery<br><em>with a pulse.</em></h1>
+          <p class="hero-sub">No endless feed. Twelve songs, a reactive room, and Munna trying very hard to look like he planned the whole set.</p>
+          <div class="hero-actions">
+            <button class="primary" id="heroPreview"><span class="play-orb">▶</span> Start the room</button>
+            <span id="roomStatus" class="room-status">Connecting…</span>
+          </div>
+          <div class="hero-chips"><span>mixed languages</span><span>30-sec previews</span><span>reactive DJ</span><span>tiny-player Munna</span></div>
+        </div>
+
+      </section>
+
+      <section class="discovery-toolbar" aria-label="Discovery controls">
+        <div class="mood-pills" role="group" aria-label="Filter by mood">
+          <button class="mood-pill active" data-mood="all">Everything</button>
+          <button class="mood-pill" data-mood="warm">Warm</button>
+          <button class="mood-pill" data-mood="late-night">After dark</button>
+          <button class="mood-pill" data-mood="energy">Move</button>
+        </div>
+        <span class="toolbar-note" id="feedStatus">Loading current picks…</span>
+      </section>
+
+      <div class="section-heading">
+        <div><p class="eyebrow">TODAY’S SMALL SET</p><h2>Pick one. Munna has opinions.</h2></div>
+        <div class="section-note">Hovering is harmless. Probably.</div>
+      </div>
+      <div id="feed" class="card-grid"></div>
+    </section>
+
+    <section id="view-plan" class="view" hidden>
+      <div class="page-heading"><p class="eyebrow">DISCOVERY WITHOUT HOMEWORK</p><h1>Two days.<br><em>Six tracks each.</em></h1><p>Short enough to finish. Varied enough to keep Munna awake.</p></div>
+      <div class="day-tabs" role="tablist"><button class="day-tab active" data-day="1">Day 01</button><button class="day-tab" data-day="2">Day 02</button></div>
+      <div id="planCards" class="card-grid"></div>
+    </section>
+
+    <section id="view-comfort" class="view" hidden>
+      <div class="page-heading"><p class="eyebrow">NO DECISIONS REQUIRED</p><h1>Comfort mode,<br><em>but not boring.</em></h1><p>Queues for when choosing another song feels like admin work.</p></div>
+      <div id="comfortMixes" class="comfort-grid"></div>
+    </section>
+
+    <section id="view-profile" class="view" hidden>
+      <div class="page-heading"><p class="eyebrow">THE ROOM IS TAKING NOTES</p><h1>Your taste,<br><em>with receipts.</em></h1><p>Song feedback is shared across all three experiences.</p></div>
+      <div class="stats" id="profileStats"></div>
+      <section class="behavior-panel">
+        <div><p class="eyebrow">MUNNA PLAYGROUND</p><h2>Make him react.</h2><p>Every reaction family is intentionally different. Only dancing moves him away from the booth.</p></div>
+        <div class="test-grid"><button data-test-event="search">Make him search</button><button data-test-event="like">Give approval</button><button data-test-event="skip">Reject a song</button><button data-test-event="poke">Poke Munna</button><button id="testDance">Dance outside booth</button><button id="testReturn">Back to work</button></div>
+      </section>
+      <section class="feedback-panel"><p class="eyebrow">SHARED FEEDBACK</p><div id="ratingsList" class="ratings-list"></div></section>
+    </section>
+
+    <footer><span>Munna’s Grooves / Munna DJ</span><span>One shared listening room</span></footer>
+  </main>
+
+  <aside id="munnaDock" class="munna-dock" aria-label="Interactive Munna DJ">
+    <div class="dock-chrome">
+      <span class="dock-label">MUNNA / PIONEER LIVE</span>
+      <span class="dock-status"><i></i><strong id="munnaStateLabel">Loading…</strong></span>
+    </div>
+    <div class="stage-meta"><span id="munnaZoneLabel">BOOTH</span><span>DJ ACTION · <b id="djActionLabel">idle</b></span></div>
+    <canvas id="munnaStage"></canvas>
+    <button id="munnaTouchTarget" class="munna-touch-target" aria-label="Interact with Munna"></button>
+    <div id="munnaBubble" class="munna-bubble" role="status" aria-live="polite"><span id="munnaBubbleText"></span></div>
+    <div class="stage-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="dock-footer"><span>Tap him · hover · search · like · skip · play</span><button id="randomBanter" type="button">Make him talk</button></div>
+  </aside>
+</div>
+
+<aside id="previewPlayer" class="preview-player" hidden aria-label="Song preview">
+  <div id="miniWalkway" class="munna-player-walkway" aria-hidden="true">
+    <canvas id="miniStage"></canvas>
+    <div id="miniBubble" class="mini-bubble">Hey 👋</div>
+    <div id="noteLayer" class="note-layer"></div>
+  </div>
+  <div class="player-art" aria-hidden="true"><span>MG</span><i></i></div>
+  <div class="player-info"><strong class="player-title"></strong><span class="player-artist"></span><p class="player-status" role="status"></p><span class="player-attribution"></span><a class="player-source" target="_blank" rel="noopener noreferrer" hidden></a><a class="player-fallback" hidden target="_blank" rel="noopener noreferrer">Find on YouTube ↗</a></div>
+  <audio controls preload="none" crossorigin="anonymous" aria-label="30-second song preview"></audio>
+  <button class="player-close" aria-label="Close preview">×</button>
+</aside>
+
+<div id="toast" class="toast" hidden role="status"></div>
+<script type="module" src="./src/main.js"></script>
+<script src="../experience-switcher.js?v=v42-pages-1" defer></script>
+</body>
+</html>

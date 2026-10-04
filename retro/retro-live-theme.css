@@ -1,0 +1,103 @@
+/* Retro presentation for the REAL live Munna's Grooves application.
+   DOM/JS/data are intentionally unchanged from Modern. */
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Rye&display=swap');
+
+:root{
+  --bg:#2a2119;
+  --surface:#47392b;
+  --line:#8a704d;
+  --muted:#cdbd9b;
+  --text:#f4e5c5;
+  --accent:#ffb94d;
+  --purple:#ddb77e;
+}
+html{background:#241b15}
+body{
+  background:
+    repeating-linear-gradient(90deg,rgba(255,255,255,.012) 0 1px,transparent 1px 34px),
+    radial-gradient(circle at 18% 8%,rgba(255,185,77,.06),transparent 27%),
+    linear-gradient(180deg,#443425,#2f241b 64%,#241b15);
+  color:var(--text);
+  font-family:"DM Mono","Courier New",monospace;
+}
+h1,h2,h3,.brand{font-family:"Rye",Georgia,serif;letter-spacing:.01em}
+.sidebar{
+  background:linear-gradient(180deg,#33291f,#241e18);
+  border-right:2px solid #765f42;
+  box-shadow:inset -1px 0 #18130f;
+}
+.brand{color:#f0dfbd;text-shadow:0 2px #20170f}
+.brand svg{stroke:#ffb94d}
+.brand-dot,.accent,.text-link{color:#ffb94d!important}
+.side-caption,.eyebrow{letter-spacing:.12em}
+.nav-link{border:1px solid transparent}
+.nav-link.active{
+  background:#ffb94d;color:#2f2418;border-color:#c68a35;
+  box-shadow:inset 0 -3px rgba(75,49,22,.28)
+}
+.nav-link:not(.active):hover{background:#493b2d;color:#f4e5c5;border-color:#705a3f}
+main{position:relative}
+.topbar{border-bottom:2px solid #765f42;color:#cbb99b}
+.view{padding-top:34px}
+.primary,.secondary,.listen,.mix li a{
+  border-radius:6px;
+  box-shadow:inset 0 -3px rgba(37,26,17,.28);
+}
+.primary{background:#ffb94d;color:#2f2418;border-color:#b67a2e}
+.primary:hover{background:#ffc96d}
+.secondary{background:#3e3328;border:2px solid #806747;color:#f2e3c4}
+.secondary:hover{background:#4b3d2f}
+select,input,textarea{
+  background:#211c16;color:#f2e3c4;border:2px solid #715c42;border-radius:5px
+}
+.feature-panel{
+  background:linear-gradient(145deg,#524432,#3d3328);
+  border:2px solid #8d7453;border-radius:18px;
+  box-shadow:inset 0 0 0 2px #2e261e,0 18px 45px rgba(0,0,0,.27)
+}
+.feature-panel:before{content:"93.3 FM  ·  NOW TUNED";display:block;grid-column:1/-1;color:#ffb94d;font-size:.72rem;font-weight:800;letter-spacing:.16em;border-bottom:1px solid #806747;padding-bottom:12px}
+.feature-aside{border-left-color:#806747}
+.pill{background:#ffb94d;color:#342517;border-radius:3px}
+.outline-pill{border:2px solid #806747;color:#d6c4a1;background:#2c251e}
+.notice{background:#28221c;border-left-color:#ffb94d;color:#d7c6a7}
+.music-card,.panel,.mix{
+  background:linear-gradient(180deg,#4c3f31,#3b3127);
+  border:2px solid #836a4b;border-radius:12px;
+  box-shadow:inset 0 0 0 1px #2b241d,0 12px 24px rgba(0,0,0,.18)
+}
+.music-card:hover{border-color:#b38b55}
+.card-top{color:#ffb94d}.card-index{color:#c8ad7d}.track-title{color:#f6e7c6}
+.card-feedback{border-top:1px solid #725d43;background:#342b22}
+.rate{color:#cbb99b}.rate:hover{background:#493b2e;color:#fff0cf}.rate[aria-pressed=true]{background:#6a5233;color:#ffcb72;border-color:#9c784a}
+.listen{background:#2b251e;border:1px solid #816846;color:#ffc66a}
+.week-tabs{border-bottom-color:#765f42}.week-tabs button[aria-pressed=true]{color:#ffb94d;border-bottom-color:#ffb94d}
+.mix-head{background:#4c3c2b!important;border-bottom:1px solid #806747}
+.stats>div{background:#493c2f;border:2px solid #806747}.stats strong{color:#ffb94d}
+.feedback-prompt{background:#332a22;border:2px solid #705941}
+footer{border-top:2px solid #765f42;color:#c6b596}
+.toast{background:#ffb94d;color:#2f2418}
+
+/* VU / radio texture without changing live DOM contracts */
+.section-heading:after{
+  content:"";width:84px;height:26px;flex:0 0 84px;border:2px solid #765f42;border-radius:5px;
+  background:repeating-linear-gradient(90deg,#ffb94d 0 2px,transparent 2px 9px),#191611;
+  opacity:.72
+}
+
+/* Keep the real preview player functional, but give it a cassette/radio finish. */
+.preview-player,.preview-shell,.player-shell{
+  --retro-player:#27211b;
+}
+body .preview-player{
+  background:#29231d!important;border:2px solid #8d7453!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.44),inset 0 0 0 2px #17130f!important;
+}
+body .preview-player button{color:#f4e5c5}
+
+@media(max-width:900px){
+  .sidebar{border-right:0;border-bottom:2px solid #765f42}
+}
+@media(max-width:640px){
+  .feature-panel:before{font-size:.62rem}
+  .section-heading:after{display:none}
+}
